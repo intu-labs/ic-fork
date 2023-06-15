@@ -71,7 +71,7 @@ pub(crate) fn x_for_index(index: NodeIndex) -> Scalar {
 ///     `NumberOfNodes`.
 ///   - The number of eligible receivers is below the threshold; under these
 ///     circumstances the receivers could never generate a valid threshold key.
-pub(crate) fn generate_threshold_key(
+pub fn generate_threshold_key(
     seed: Seed,
     threshold: NumberOfNodes,
     receivers: NumberOfNodes,
@@ -104,7 +104,7 @@ pub(crate) fn generate_threshold_key(
 /// * The number of eligible receivers is below the threshold; under these
 ///   circumstances the receivers could never generate a valid threshold key.
 /// * The `threshold` is `0`.
-pub(crate) fn threshold_share_secret_key(
+pub fn threshold_share_secret_key(
     seed: Seed,
     threshold: NumberOfNodes,
     receivers: NumberOfNodes,

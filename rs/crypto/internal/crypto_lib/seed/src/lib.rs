@@ -5,7 +5,7 @@
 //! a random number generator (ChaCha20).
 
 use crate::xmd::expand_message_xmd;
-use core::fmt::{self, Debug};
+use core::fmt::{Debug};
 use rand::{CryptoRng, RngCore, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::convert::TryInto;
@@ -26,16 +26,18 @@ const SEED_LEN: usize = 32;
 /// multiple unrelated Seeds from a single source Seed.
 ///
 /// It is not possible to extract the value of a Seed.
-#[derive(Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, Debug)]
 pub struct Seed {
     value: [u8; SEED_LEN],
 }
 
-impl Debug for Seed {
+/* impl Debug for Seed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Seed - REDACTED")
     }
 }
+*/
+//TODO: uncomment (here and in poly)
 
 impl Seed {
     fn new(input: &[u8], domain_separator: &str) -> Self {
@@ -80,5 +82,12 @@ impl Seed {
     /// The Seed is consumed by this operation
     pub fn into_rng(self) -> rand_chacha::ChaCha20Rng {
         rand_chacha::ChaCha20Rng::from_seed(self.value)
+    }
+
+    /// Convert a Seed into a byte slice
+    ///
+    /// The Seed is consumed by this operation (Don't know if it's add security problems)
+    pub fn to_bytes(&self) -> &[u8] {
+        &self.value
     }
 }

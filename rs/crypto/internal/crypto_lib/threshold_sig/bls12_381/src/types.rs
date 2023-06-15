@@ -45,7 +45,7 @@ impl CombinedSignatureBytes {
     pub const SIZE: usize = G1Projective::BYTES;
 }
 
-pub(super) type SecretKey = Scalar;
+pub type SecretKey = Scalar;
 
 /// A serialized BLS secret key.
 #[derive(Clone, Eq, PartialEq, Zeroize, ZeroizeOnDrop, Serialize, Deserialize)]

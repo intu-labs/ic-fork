@@ -1,5 +1,5 @@
 use crate::*;
-use core::fmt::{self, Debug};
+use core::fmt::Debug;
 use ic_types::crypto::canister_threshold_sig::idkg::IDkgOpening;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -10,12 +10,12 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 ///
 /// The coefficients are stored in little-endian ordering, ie a_0 is
 /// self.coefficients\[0\]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Polynomial {
     curve: EccCurveType,
     coefficients: Vec<EccScalar>,
 }
-
+/* 
 impl Debug for Polynomial {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.curve {
@@ -24,7 +24,7 @@ impl Debug for Polynomial {
         }
     }
 }
-
+*/
 impl Eq for Polynomial {}
 
 impl PartialEq for Polynomial {
@@ -281,7 +281,7 @@ impl Polynomial {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub enum CommitmentOpening {
     Simple(EccScalar),
     Pedersen(EccScalar, EccScalar),
@@ -316,7 +316,7 @@ impl CommitmentOpening {
             .map_err(|e| ThresholdEcdsaError::SerializationError(format!("{}", e)))
     }
 }
-
+/*
 impl Debug for CommitmentOpening {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self {
@@ -341,6 +341,7 @@ impl Debug for CommitmentOpening {
         }
     }
 }
+*/
 
 impl TryFrom<&CommitmentOpeningBytes> for CommitmentOpening {
     type Error = ThresholdEcdsaError;
@@ -406,7 +407,7 @@ fn evaluate_at(points: &[EccPoint], eval_point: NodeIndex) -> ThresholdEcdsaResu
 }
 
 impl SimpleCommitment {
-    pub(crate) fn new(points: Vec<EccPoint>) -> Self {
+    pub fn new(points: Vec<EccPoint>) -> Self {
         Self { points }
     }
 
@@ -433,7 +434,7 @@ impl SimpleCommitment {
         Ok(Self::new(points))
     }
 
-    pub(crate) fn evaluate_at(&self, eval_point: NodeIndex) -> ThresholdEcdsaResult<EccPoint> {
+    pub fn evaluate_at(&self, eval_point: NodeIndex) -> ThresholdEcdsaResult<EccPoint> {
         evaluate_at(&self.points, eval_point)
     }
 
@@ -454,7 +455,7 @@ pub struct PedersenCommitment {
 }
 
 impl PedersenCommitment {
-    pub(crate) fn new(points: Vec<EccPoint>) -> Self {
+    pub fn new(points: Vec<EccPoint>) -> Self {
         Self { points }
     }
 
@@ -573,25 +574,25 @@ impl PolynomialCommitment {
         r
     }
 
-    pub(crate) fn ctype(&self) -> PolynomialCommitmentType {
+    pub fn ctype(&self) -> PolynomialCommitmentType {
         match self {
             Self::Simple(_) => PolynomialCommitmentType::Simple,
             Self::Pedersen(_) => PolynomialCommitmentType::Pedersen,
         }
     }
 
-    pub(crate) fn points(&self) -> &[EccPoint] {
+    pub fn points(&self) -> &[EccPoint] {
         match self {
             Self::Simple(c) => &c.points,
             Self::Pedersen(c) => &c.points,
         }
     }
 
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.points().len()
     }
 
-    pub(crate) fn evaluate_at(&self, eval_point: NodeIndex) -> ThresholdEcdsaResult<EccPoint> {
+    pub fn evaluate_at(&self, eval_point: NodeIndex) -> ThresholdEcdsaResult<EccPoint> {
         evaluate_at(self.points(), eval_point)
     }
 
@@ -603,7 +604,7 @@ impl PolynomialCommitment {
         self.constant_term().curve_type()
     }
 
-    pub(crate) fn return_opening_if_consistent(
+    pub fn return_opening_if_consistent(
         &self,
         index: NodeIndex,
         opening: &CommitmentOpening,

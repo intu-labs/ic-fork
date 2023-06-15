@@ -1,11 +1,11 @@
 use crate::*;
-use core::fmt::{self, Debug};
+use core::fmt::Debug;
 use ic_types::crypto::canister_threshold_sig::idkg::BatchSignedIDkgDealing;
 use ic_types::NumberOfNodes;
 use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum SecretShares {
     Random,
     ReshareOfUnmasked(EccScalar),
@@ -13,6 +13,7 @@ pub enum SecretShares {
     UnmaskedTimesMasked(EccScalar, (EccScalar, EccScalar)),
 }
 
+/* 
 impl Debug for SecretShares {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self {
@@ -64,6 +65,7 @@ impl Debug for SecretShares {
         }
     }
 }
+*/
 
 impl TryFrom<(&CommitmentOpeningBytes, Option<&CommitmentOpeningBytes>)> for SecretShares {
     type Error = ThresholdEcdsaError;

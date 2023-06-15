@@ -1,7 +1,7 @@
 //! Non-interactive Distributed Key Generation using Groth20 with BLS12-381.
-mod dealing;
-mod encryption;
-mod transcript;
+pub mod dealing;
+pub mod encryption;
+pub mod transcript;
 
 pub mod types;
 

@@ -78,7 +78,7 @@ impl MEGaPublicKey {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, Debug)]
 pub struct MEGaPrivateKey {
     secret: EccScalar,
 }
@@ -111,7 +111,7 @@ impl MEGaPrivateKey {
         &self.secret
     }
 }
-
+/* 
 impl Debug for MEGaPrivateKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.secret {
@@ -120,7 +120,7 @@ impl Debug for MEGaPrivateKey {
         }
     }
 }
-
+*/
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MEGaCiphertextSingle {
     pub ephemeral_key: EccPoint,  // "v" in the paper
@@ -135,6 +135,12 @@ pub struct MEGaCiphertextPair {
     pub pop_public_key: EccPoint, // "v'" in the paper
     pub pop_proof: zk::ProofOfDLogEquivalence,
     pub ctexts: Vec<(EccScalar, EccScalar)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CiphertextVec {
+    Scalar(Vec<EccScalar>),
+    ScalarPairs(Vec<(EccScalar, EccScalar)>),
 }
 
 /// Some type of MEGa ciphertext
@@ -179,6 +185,13 @@ impl MEGaCiphertext {
             MEGaCiphertext::Pairs(c) => &c.pop_proof,
         }
     }
+
+    pub fn ctexts(&self) -> CiphertextVec {
+      match self {
+          MEGaCiphertext::Pairs(c) => CiphertextVec::ScalarPairs(c.ctexts.clone()),
+          MEGaCiphertext::Single(c) => CiphertextVec::Scalar(c.ctexts.clone()),
+      }
+  }
 
     /// Check the validity of a MEGa ciphertext
     ///
@@ -253,7 +266,7 @@ impl MEGaCiphertext {
     /// * `InvalidCommitment` if the decrypted share does not match with the commitment.
     /// * `InvalidProof` if the proof of possession is incorrect.
     /// * Any other error if the ciphertext could not be decrypted for some reason.
-    pub(crate) fn decrypt_and_check(
+    pub fn decrypt_and_check(
         &self,
         commitment: &PolynomialCommitment,
         associated_data: &[u8],
