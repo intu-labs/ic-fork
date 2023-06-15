@@ -209,7 +209,7 @@ pub(crate) fn sign_message(message: &[u8], secret_key: &SecretKey) -> Signature 
 /// # Errors
 /// * `CryptoError::InvalidArgument` if the given signature shares are lower
 ///   than the given threshold.
-pub(crate) fn combine_signatures(
+pub fn combine_signatures(
     signatures: &[Option<Signature>],
     threshold: NumberOfNodes,
 ) -> CryptoResult<Signature> {
