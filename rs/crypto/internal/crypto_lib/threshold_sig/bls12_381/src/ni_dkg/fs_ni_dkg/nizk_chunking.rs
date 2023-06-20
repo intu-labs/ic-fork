@@ -208,7 +208,13 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
     let n = instance.public_keys.len();
 
     let ss = n * m * (CHUNK_SIZE - 1) * CHALLENGE_MASK;
-    let zz = 2 * NUM_ZK_REPETITIONS * ss;
+//    let zz = 2 * NUM_ZK_REPETITIONS * ss;
+    let zz: usize = 2 * NUM_ZK_REPETITIONS;
+    let zz = zz.wrapping_mul(ss);
+    //unsafe {
+    //    ss = std::intrinsics::unchecked_mul(2*NUM_ZK_REPETITIONS, ss);
+    //}
+
     let range = zz - 1 + ss + 1;
     let zz_big = Scalar::from_usize(zz);
     let p_sub_s = Scalar::from_usize(ss).neg();
