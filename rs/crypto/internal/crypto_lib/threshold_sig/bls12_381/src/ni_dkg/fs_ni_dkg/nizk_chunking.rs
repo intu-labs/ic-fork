@@ -212,10 +212,15 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
     let ss = n * m * (CHUNK_SIZE - 1) * CHALLENGE_MASK;
     #[cfg(target_arch = "wasm32")]
     console::log_1(&format!("OVERFLOW CHECK ss: {}", ss).into());
-    let zz = 2 * NUM_ZK_REPETITIONS * ss;
-    let range = zz - 1 + ss + 1;
+    #[cfg(target_arch = "wasm32")]
+    console::log_1(&format!("OVERFLOW CHECK NUM_ZK_REPETITIONS: {}", NUM_ZK_REPETITIONS).into());
+    #[cfg(target_arch = "wasm32")]
+    console::log_1(&format!("usize::max: {}", usize::MAX).into());
+    let _usize_max = usize::MAX;
+    let zz: u64 = 2 * (NUM_ZK_REPETITIONS as u64) * (ss as u64);
+    let range: u64 = zz - 1 + (ss as u64) + 1;
 
-    let zz_big = Scalar::from_usize(zz);
+    let zz_big = Scalar::from_u64(zz);
     let p_sub_s = Scalar::from_usize(ss).neg();
 
     // y0 <- getRandomG1
@@ -231,7 +236,7 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
 
     let (first_move, first_challenge, z_s) = loop {
         let sigma = [(); NUM_ZK_REPETITIONS]
-            .map(|_| Scalar::random_within_range(rng, range as u64) + &p_sub_s);
+            .map(|_| Scalar::random_within_range(rng, range) + &p_sub_s);
 
         let cc = G1Projective::batch_normalize_array(&y0_g1_tbl.mul2_array(&beta, &sigma));
 
