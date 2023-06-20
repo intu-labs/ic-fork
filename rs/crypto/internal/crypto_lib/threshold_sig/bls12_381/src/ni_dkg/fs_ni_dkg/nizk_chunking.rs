@@ -255,7 +255,7 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
                 .zip(witness.scalars_s.iter())
                 .for_each(|(e_i, s_i)| {
                     e_i.iter().zip(s_i.iter()).for_each(|(e_ij, s_ij)| {
-                        acc += Scalar::from_usize(e_ij[k as usize]) * s_ij;
+                        acc += Scalar::from_u64(e_ij[k as usize]) * s_ij;
                     });
                 });
             acc += &sigma[k as usize];
@@ -424,7 +424,7 @@ pub fn verify_chunking(
             let e_ijk_s: Vec<_> = e
                 .iter()
                 .flatten()
-                .map(|e_ij| Scalar::from_usize(e_ij[k]))
+                .map(|e_ij| Scalar::from_u64(e_ij[k]))
                 .collect();
             if c_ij_s.len() as u64 != m * n || e_ijk_s.len() as u64 != m * n {
                 return Err(ZkProofChunkingError::InvalidProof);
@@ -477,13 +477,13 @@ impl ChunksOracle {
     }
 
     /// Get a chunk-sized unit of data.
-    fn get_chunk(&mut self) -> usize {
+    fn get_chunk(&mut self) -> u64 {
         // The order of the getbyte(..) calls matters so this is intentionally serial.
-        CHALLENGE_MASK
-            & (0..CHALLENGE_BYTES).fold(0, |state, _| (state << 8) | (self.getbyte() as usize))
+        CHALLENGE_MASK as u64
+            & (0..CHALLENGE_BYTES as u64).fold(0, |state, _| (state << 8) | (self.getbyte() as u64))
     }
 
-    fn get_all_chunks(&mut self, n: usize, m: usize) -> Vec<Vec<Vec<usize>>> {
+    fn get_all_chunks(&mut self, n: usize, m: usize) -> Vec<Vec<Vec<u64>>> {
         (0..n)
             .map(|_| {
                 (0..m)
@@ -495,7 +495,7 @@ impl ChunksOracle {
 }
 
 fn chunking_proof_challenge_oracle(
-    first_challenge: &[Vec<Vec<usize>>],
+    first_challenge: &[Vec<Vec<u64>>],
     second_move: &SecondMoveChunking,
 ) -> Scalar {
     let mut map = HashedMap::new();
