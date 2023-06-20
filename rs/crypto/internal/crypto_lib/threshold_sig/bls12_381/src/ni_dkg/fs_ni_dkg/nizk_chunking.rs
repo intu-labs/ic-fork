@@ -206,10 +206,10 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
         .check_instance()
         .expect("The chunking proof instance is invalid");
 
-    let m = instance.randomizers_r.len();
-    let n = instance.public_keys.len();
+    let m = instance.randomizers_r.len() as u64;
+    let n = instance.public_keys.len() as u64;
 
-    let ss = n * m * (CHUNK_SIZE - 1) * CHALLENGE_MASK;
+    let ss = n * m * (CHUNK_SIZE as u64 - 1) * CHALLENGE_MASK as u64;
     #[cfg(target_arch = "wasm32")]
     console::log_1(&format!("OVERFLOW CHECK ss: {}", ss).into());
     #[cfg(target_arch = "wasm32")]
@@ -221,7 +221,7 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
     let range: u64 = zz - 1 + (ss as u64) + 1;
 
     let zz_big = Scalar::from_u64(zz);
-    let p_sub_s = Scalar::from_usize(ss).neg();
+    let p_sub_s = Scalar::from_u64(ss).neg();
 
     // y0 <- getRandomG1
     let y0 = G1Affine::hash(b"ic-crypto-nizk-chunking-proof-y0", &rng.gen::<[u8; 32]>());
@@ -242,11 +242,11 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
 
         let first_move = FirstMoveChunking::from(y0.clone(), bb.clone(), cc);
         // Verifier's challenge.
-        let first_challenge = ChunksOracle::new(instance, &first_move).get_all_chunks(n, m);
+        let first_challenge = ChunksOracle::new(instance, &first_move).get_all_chunks(n as usize, m as usize);
 
         // z_s = [sum [e_ijk * s_ij | i <- [1..n], j <- [1..m]] + sigma_k | k <- [1..l]]
 
-        let iota: [usize; NUM_ZK_REPETITIONS] = std::array::from_fn(|i| i);
+        let iota: [u64; NUM_ZK_REPETITIONS] = std::array::from_fn(|i| i as u64);
 
         let z_s = iota.map(|k| {
             let mut acc = Scalar::zero();
@@ -255,10 +255,10 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
                 .zip(witness.scalars_s.iter())
                 .for_each(|(e_i, s_i)| {
                     e_i.iter().zip(s_i.iter()).for_each(|(e_ij, s_ij)| {
-                        acc += Scalar::from_usize(e_ij[k]) * s_ij;
+                        acc += Scalar::from_usize(e_ij[k as usize]) * s_ij;
                     });
                 });
-            acc += &sigma[k];
+            acc += &sigma[k as usize];
 
             acc
         });
@@ -286,7 +286,7 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
     // delta <- replicate (n + 1) getRandom
     // dd = map (g1^) delta
     // Y = product [y_i^delta_i | i <- [0..n]]
-    let delta = Scalar::batch_random(rng, n + 1);
+    let delta = Scalar::batch_random(rng, n as usize + 1);
     let dd = g1.batch_mul(&delta);
 
     let yy = {
@@ -350,9 +350,9 @@ pub fn verify_chunking(
     require_eq("z_r", nizk.z_r.len(), num_receivers)?;
     require_eq("z_s", nizk.z_s.len(), NUM_ZK_REPETITIONS)?;
 
-    let m = instance.randomizers_r.len();
-    let n = instance.public_keys.len();
-    let ss = (n as u64) * (m as u64) * (CHUNK_SIZE as u64 - 1) * CHALLENGE_MASK as u64;
+    let m = instance.randomizers_r.len() as u64;
+    let n = instance.public_keys.len() as u64;
+    let ss = n * m * (CHUNK_SIZE as u64 - 1) * CHALLENGE_MASK as u64;
     let zz = 2 * (NUM_ZK_REPETITIONS as u64) * ss;
     let zz_big = Scalar::from_u64(zz);
 
@@ -365,7 +365,7 @@ pub fn verify_chunking(
     let first_move = FirstMoveChunking::from(nizk.y0.clone(), nizk.bb.clone(), nizk.cc.clone());
     let second_move = SecondMoveChunking::from(&nizk.z_s, &nizk.dd, &nizk.yy);
     // e_{m,n,l} = oracle(instance, y_0, bb, cc)
-    let e = ChunksOracle::new(instance, &first_move).get_all_chunks(n, m);
+    let e = ChunksOracle::new(instance, &first_move).get_all_chunks(n as usize, m as usize);
 
     // x = oracle(e, z_s, dd, yy)
     let x = chunking_proof_challenge_oracle(&e, &second_move);
@@ -426,7 +426,7 @@ pub fn verify_chunking(
                 .flatten()
                 .map(|e_ij| Scalar::from_usize(e_ij[k]))
                 .collect();
-            if c_ij_s.len() != m * n || e_ijk_s.len() != m * n {
+            if c_ij_s.len() as u64 != m * n || e_ijk_s.len() as u64 != m * n {
                 return Err(ZkProofChunkingError::InvalidProof);
             }
 
