@@ -215,7 +215,11 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
     //    ss = std::intrinsics::unchecked_mul(2*NUM_ZK_REPETITIONS, ss);
     //}
 
-    let range = zz - 1 + ss + 1;
+    //let range = zz - 1 + ss + 1;
+    let range = zz -1;
+    let range = range.wrapping_add(ss);
+    let range = range.wrapping_add(1);
+
     let zz_big = Scalar::from_usize(zz);
     let p_sub_s = Scalar::from_usize(ss).neg();
 
