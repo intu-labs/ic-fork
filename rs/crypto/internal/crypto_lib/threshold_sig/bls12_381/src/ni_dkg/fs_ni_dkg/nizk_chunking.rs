@@ -11,6 +11,8 @@ use ic_crypto_internal_types::sign::threshold_sig::ni_dkg::ni_dkg_groth20_bls12_
 use rand::{CryptoRng, Rng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
+use web_sys::console;
+
 /// Domain separators for the zk proof of chunking
 const DOMAIN_PROOF_OF_CHUNKING_ORACLE: &str = "ic-zk-proof-of-chunking-chunking";
 const DOMAIN_PROOF_OF_CHUNKING_CHALLENGE: &str = "ic-zk-proof-of-chunking-challenge";
@@ -208,17 +210,10 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
     let n = instance.public_keys.len();
 
     let ss = n * m * (CHUNK_SIZE - 1) * CHALLENGE_MASK;
-//    let zz = 2 * NUM_ZK_REPETITIONS * ss;
-    let zz: usize = 2 * NUM_ZK_REPETITIONS;
-    let zz = zz.wrapping_mul(ss);
-    //unsafe {
-    //    ss = std::intrinsics::unchecked_mul(2*NUM_ZK_REPETITIONS, ss);
-    //}
-
-    //let range = zz - 1 + ss + 1;
-    let range = zz -1;
-    let range = range.wrapping_add(ss);
-    let range = range.wrapping_add(1);
+    #[cfg(target_arch = "wasm32")]
+    console::log_1(&format!("OVERFLOW CHECK ss: {}", ss).into());
+    let zz = 2 * NUM_ZK_REPETITIONS * ss;
+    let range = zz - 1 + ss + 1;
 
     let zz_big = Scalar::from_usize(zz);
     let p_sub_s = Scalar::from_usize(ss).neg();
