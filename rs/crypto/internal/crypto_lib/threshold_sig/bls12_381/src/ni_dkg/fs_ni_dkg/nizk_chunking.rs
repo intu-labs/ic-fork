@@ -350,11 +350,11 @@ pub fn verify_chunking(
     require_eq("z_r", nizk.z_r.len(), num_receivers)?;
     require_eq("z_s", nizk.z_s.len(), NUM_ZK_REPETITIONS)?;
 
-    let m = instance.randomizers_r.len();
-    let n = instance.public_keys.len();
-    let ss = n * m * (CHUNK_SIZE - 1) * CHALLENGE_MASK;
-    let zz = 2 * NUM_ZK_REPETITIONS * ss;
-    let zz_big = Scalar::from_usize(zz);
+    let m = instance.randomizers_r.len() as u64;
+    let n = instance.public_keys.len() as u64;
+    let ss = n * m * (CHUNK_SIZE as u64 - 1) * CHALLENGE_MASK as u64;
+    let zz = 2 * (NUM_ZK_REPETITIONS as u64) * ss;
+    let zz_big = Scalar::from_u64(zz);
 
     for z_sk in nizk.z_s.iter() {
         if z_sk >= &zz_big {
