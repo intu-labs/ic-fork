@@ -544,13 +544,21 @@ impl ChunksOracle {
         let mut map = HashedMap::new();
         map.insert_hashed("instance", instance);
         map.insert_hashed("first-move", first_move);
-        map.insert_hashed("number-of-parallel-repetitions", &NUM_ZK_REPETITIONS);
+        map.insert_hashed("number-of-parallel-repetitions", &(NUM_ZK_REPETITIONS as u64));
+        #[cfg(target_arch = "wasm32")]
+        console::log_1(&format!("ChunksOracle instance: {:#?}", instance).into());
+        #[cfg(not(target_arch = "wasm32"))]
+        println!("ChunksOracle instance: {:#?}", instance);
+        #[cfg(target_arch = "wasm32")]
+        console::log_1(&format!("ChunksOracle first_move: {:#?}", first_move).into());
+        #[cfg(not(target_arch = "wasm32"))]
+        println!("ChunksOracle first_move: {:#?}", first_move);
 
         let hash = random_oracle(DOMAIN_PROOF_OF_CHUNKING_ORACLE, &map);
         #[cfg(target_arch = "wasm32")]
         console::log_1(&format!("ChunksOracle hash: {:#?}", hash).into());
         #[cfg(not(target_arch = "wasm32"))]
-        println!("ChunksOracle hash: {:#?}", hash);
+        println!("ChunksOracle hash: {:?}", hash);
 
         let rng = ChaCha20Rng::from_seed(hash);
         Self { rng }
