@@ -406,6 +406,10 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
     }
 
     let z_beta = Scalar::muln_vartime(&beta, &xpowers) + &delta[0];
+    #[cfg(target_arch = "wasm32")]
+    console::log_1(&format!("z_beta: {:#?}", z_beta).into());
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("z_beta: {:#?}", z_beta);
 
     ProofChunking {
         y0,
@@ -438,6 +442,11 @@ pub fn verify_chunking(
     let ss = n * m * (CHUNK_SIZE as u64 - 1) * CHALLENGE_MASK as u64;
     let zz = 2 * (NUM_ZK_REPETITIONS as u64) * ss;
     let zz_big = Scalar::from_u64(zz);
+
+    #[cfg(target_arch = "wasm32")]
+    console::log_1(&format!("verify_chunking zz_big: {:#?}", zz_big).into());
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("verify_chunking zz_big: {:#?}", zz_big);
 
     for z_sk in nizk.z_s.iter() {
         if z_sk >= &zz_big {
@@ -545,14 +554,14 @@ impl ChunksOracle {
         map.insert_hashed("instance", instance);
         map.insert_hashed("first-move", first_move);
         map.insert_hashed("number-of-parallel-repetitions", &(NUM_ZK_REPETITIONS as u64));
-        #[cfg(target_arch = "wasm32")]
-        console::log_1(&format!("ChunksOracle instance: {:#?}", instance).into());
-        #[cfg(not(target_arch = "wasm32"))]
-        println!("ChunksOracle instance: {:#?}", instance);
-        #[cfg(target_arch = "wasm32")]
-        console::log_1(&format!("ChunksOracle first_move: {:#?}", first_move).into());
-        #[cfg(not(target_arch = "wasm32"))]
-        println!("ChunksOracle first_move: {:#?}", first_move);
+        // #[cfg(target_arch = "wasm32")]
+        // console::log_1(&format!("ChunksOracle instance: {:#?}", instance).into());
+        // #[cfg(not(target_arch = "wasm32"))]
+        // println!("ChunksOracle instance: {:#?}", instance);
+        // #[cfg(target_arch = "wasm32")]
+        // console::log_1(&format!("ChunksOracle first_move: {:#?}", first_move).into());
+        // #[cfg(not(target_arch = "wasm32"))]
+        // println!("ChunksOracle first_move: {:#?}", first_move);
 
         let hash = random_oracle(DOMAIN_PROOF_OF_CHUNKING_ORACLE, &map);
         #[cfg(target_arch = "wasm32")]
