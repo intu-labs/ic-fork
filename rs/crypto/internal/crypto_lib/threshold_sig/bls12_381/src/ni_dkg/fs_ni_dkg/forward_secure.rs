@@ -742,6 +742,16 @@ pub fn enc_chunks<R: RngCore + CryptoRng>(
     let id = ftau_extended(&cc, &rr, &ss, sys, epoch, associated_data);
     let id_h_tbl = G2Projective::compute_mul2_tbl(&id, &G2Projective::from(&sys.h));
 
+    #[cfg(target_arch = "wasm32")]
+    console::log_1(&format!("r: {:#?}", r).into());
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("r: {:#?}", r);
+
+    #[cfg(target_arch = "wasm32")]
+    console::log_1(&format!("s: {:#?}", s).into());
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("s: {:#?}", s);
+
     let zz = G2Projective::batch_normalize_array(&id_h_tbl.mul2_array(&r, &s));
     #[cfg(target_arch = "wasm32")]
     console::log_1(&format!("zz: {:#?}", zz).into());
