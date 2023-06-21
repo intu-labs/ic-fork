@@ -260,10 +260,10 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
         let cc = G1Projective::batch_normalize_array(&y0_g1_tbl.mul2_array(&beta, &sigma));
 
         let first_move = FirstMoveChunking::from(y0.clone(), bb.clone(), cc);
-        #[cfg(target_arch = "wasm32")]
-        console::log_1(&format!("first_move: {:#?}", first_move).into());
-        #[cfg(not(target_arch = "wasm32"))]
-        println!("first_move: {:#?}", first_move);
+        // #[cfg(target_arch = "wasm32")]
+        // console::log_1(&format!("first_move: {:#?}", first_move).into());
+        // #[cfg(not(target_arch = "wasm32"))]
+        // println!("first_move: {:#?}", first_move);
 
         // Verifier's challenge.
         let first_challenge = ChunksOracle::new(instance, &first_move).get_all_chunks(n as usize, m as usize);
@@ -279,6 +279,11 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
                 .zip(witness.scalars_s.iter())
                 .for_each(|(e_i, s_i)| {
                     e_i.iter().zip(s_i.iter()).for_each(|(e_ij, s_ij)| {
+                        #[cfg(target_arch = "wasm32")]
+                        console::log_1(&format!("k: {:?}, e_ij: {:#?}, s_ij: {:#?}", k, e_ij[k as usize], s_ij).into());
+                        #[cfg(not(target_arch = "wasm32"))]
+                        println!("k: {:?}, e_ij: {:#?}, s_ij: {:#?}", k, e_ij[k as usize], s_ij);
+            
                         acc += Scalar::from_u64(e_ij[k as usize]) * s_ij;
                     });
                 });
