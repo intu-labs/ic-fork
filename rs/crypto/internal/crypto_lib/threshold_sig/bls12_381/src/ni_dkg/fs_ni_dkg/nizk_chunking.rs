@@ -287,10 +287,10 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
                 .iter()
                 .zip(witness.scalars_s.iter())
             .for_each(|(e_i, s_i)| {
-                    #[cfg(target_arch = "wasm32")]
-                    console::log_1(&format!("k: {:?}, e_i: {:#?}, s_i: {:#?}", k, e_i, s_i).into());
-                    #[cfg(not(target_arch = "wasm32"))]
-                    println!("k: {:?}, e_i: {:#?}, s_i: {:#?}", k, e_i, s_i);
+                    // #[cfg(target_arch = "wasm32")]
+                    // console::log_1(&format!("k: {:?}, e_i: {:#?}, s_i: {:#?}", k, e_i, s_i).into());
+                    // #[cfg(not(target_arch = "wasm32"))]
+                    // println!("k: {:?}, e_i: {:#?}, s_i: {:#?}", k, e_i, s_i);
                     e_i.iter().zip(s_i.iter()).for_each(|(e_ij, s_ij)| {
                         // SHAWN: e_ij wrong at this point
                         // #[cfg(target_arch = "wasm32")]
