@@ -273,16 +273,24 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
         let iota: [u64; NUM_ZK_REPETITIONS] = std::array::from_fn(|i| i as u64);
 
         #[cfg(target_arch = "wasm32")]
-        console::log_1(&format!("witness.scalars_s: {:#?}", witness.scalars_s).into());
+        console::log_1(&format!("witness: {:#?}", witness).into());
         #[cfg(not(target_arch = "wasm32"))]
-        println!("witness.scalars_s: {:#?}", witness.scalars_s);
+        println!("witness: {:#?}", witness);
+        #[cfg(target_arch = "wasm32")]
+        console::log_1(&format!("instance: {:#?}", instance).into());
+        #[cfg(not(target_arch = "wasm32"))]
+        println!("instance: {:#?}", instance);
 
         let z_s = iota.map(|k| {
             let mut acc = Scalar::zero();
             first_challenge
                 .iter()
                 .zip(witness.scalars_s.iter())
-                .for_each(|(e_i, s_i)| {
+            .for_each(|(e_i, s_i)| {
+                    #[cfg(target_arch = "wasm32")]
+                    console::log_1(&format!("k: {:?}, e_i: {:#?}, s_i: {:#?}", k, e_i, s_i).into());
+                    #[cfg(not(target_arch = "wasm32"))]
+                    println!("k: {:?}, e_i: {:#?}, s_i: {:#?}", k, e_i, s_i);
                     e_i.iter().zip(s_i.iter()).for_each(|(e_ij, s_ij)| {
                         // SHAWN: e_ij wrong at this point
                         // #[cfg(target_arch = "wasm32")]
