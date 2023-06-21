@@ -212,17 +212,26 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
     let ss = n * m * (CHUNK_SIZE as u64 - 1) * CHALLENGE_MASK as u64;
     #[cfg(target_arch = "wasm32")]
     console::log_1(&format!("OVERFLOW CHECK ss: {}", ss).into());
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("OVERFLOW CHECK ss: {}", ss);
     #[cfg(target_arch = "wasm32")]
     console::log_1(&format!("OVERFLOW CHECK NUM_ZK_REPETITIONS: {}", NUM_ZK_REPETITIONS).into());
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("OVERFLOW CHECK NUM_ZK_REPETITIONS: {}", NUM_ZK_REPETITIONS);
     #[cfg(target_arch = "wasm32")]
     console::log_1(&format!("usize::max: {}", usize::MAX).into());
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("usize::max: {}", usize::MAX);
     let _usize_max = usize::MAX;
     let zz: u64 = 2 * (NUM_ZK_REPETITIONS as u64) * (ss as u64);
     let range: u64 = zz - 1 + (ss as u64) + 1;
 
     let zz_big = Scalar::from_u64(zz);
     let p_sub_s = Scalar::from_u64(ss).neg();
-
+    #[cfg(target_arch = "wasm32")]
+    console::log_1(&format!("zz_big: {:#?}, p_sub_s: {:#?}", zz_big, p_sub_s).into());
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("zz_big: {:#?}, p_sub_s: {:#?}", zz_big, p_sub_s);
     // y0 <- getRandomG1
     let y0 = G1Affine::hash(b"ic-crypto-nizk-chunking-proof-y0", &rng.gen::<[u8; 32]>());
 
@@ -298,11 +307,21 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
         G1Projective::muln_affine_vartime(&y0_and_pk, &delta).to_affine()
     };
 
+    #[cfg(target_arch = "wasm32")]
+    console::log_1(&format!("yy: {:#?}", yy).into());
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("yy: {:#?}", yy);
+
     let second_move = SecondMoveChunking::from(&z_s, &dd, &yy);
 
     // Second verifier's challege. Forth move in the protocol.
     // x = oracle(e, z_s, dd, yy)
     let second_challenge = chunking_proof_challenge_oracle(&first_challenge, &second_move);
+
+    #[cfg(target_arch = "wasm32")]
+    console::log_1(&format!("second_challenge: {:#?}", second_challenge).into());
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("second_challenge: {:#?}", second_challenge);
 
     let xpowers = Scalar::xpowers(&second_challenge, NUM_ZK_REPETITIONS);
 
