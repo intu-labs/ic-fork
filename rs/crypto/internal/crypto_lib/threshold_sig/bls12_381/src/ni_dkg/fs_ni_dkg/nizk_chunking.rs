@@ -271,10 +271,18 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
         #[cfg(not(target_arch = "wasm32"))]
         println!("n: {:?}, m: {:#?}", n, m);
         let first_challenge = ChunksOracle::new(instance, &first_move).get_all_chunks(n as usize, m as usize);
+        #[cfg(target_arch = "wasm32")]
+        console::log_1(&format!("first_challenge: {:#?}", first_challenge[0][0]).into());
+        #[cfg(not(target_arch = "wasm32"))]
+        println!("first_challenge: {:#?}", first_challenge[0][0]);
 
         // z_s = [sum [e_ijk * s_ij | i <- [1..n], j <- [1..m]] + sigma_k | k <- [1..l]]
 
         let iota: [u64; NUM_ZK_REPETITIONS] = std::array::from_fn(|i| i as u64);
+        #[cfg(target_arch = "wasm32")]
+        console::log_1(&format!("iota: {:#?}", iota).into());
+        #[cfg(not(target_arch = "wasm32"))]
+        println!("iota: {:#?}", iota);
 
         // SHAWN: witness and instance match
         // #[cfg(target_arch = "wasm32")]
@@ -292,10 +300,10 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
                 .iter()
                 .zip(witness.scalars_s.iter())
             .for_each(|(e_i, s_i)| {
-                    #[cfg(target_arch = "wasm32")]
-                    console::log_1(&format!("k: {:?}, e_i: {:#?}, s_i: {:#?}", k, e_i[0], s_i).into());
-                    #[cfg(not(target_arch = "wasm32"))]
-                    println!("k: {:?}, e_i: {:#?}, s_i: {:#?}", k, e_i[0], s_i);
+                    // #[cfg(target_arch = "wasm32")]
+                    // console::log_1(&format!("k: {:?}, e_i: {:#?}, s_i: {:#?}", k, e_i[0], s_i).into());
+                    // #[cfg(not(target_arch = "wasm32"))]
+                    // println!("k: {:?}, e_i: {:#?}, s_i: {:#?}", k, e_i[0], s_i);
                     e_i.iter().zip(s_i.iter()).for_each(|(e_ij, s_ij)| {
                         // SHAWN: e_ij wrong at this point
                         // #[cfg(target_arch = "wasm32")]
