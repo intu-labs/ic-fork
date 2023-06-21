@@ -117,6 +117,7 @@ pub struct ProofChunking {
 }
 
 /// First move of the prover in the zero-knowledge proof of chunking.
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct FirstMoveChunking {
     y0: G1Affine,
     bb: [G1Affine; NUM_ZK_REPETITIONS],
@@ -210,18 +211,18 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
     let n = instance.public_keys.len() as u64;
 
     let ss = n * m * (CHUNK_SIZE as u64 - 1) * CHALLENGE_MASK as u64;
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("OVERFLOW CHECK ss: {}", ss).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("OVERFLOW CHECK ss: {}", ss);
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("OVERFLOW CHECK NUM_ZK_REPETITIONS: {}", NUM_ZK_REPETITIONS).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("OVERFLOW CHECK NUM_ZK_REPETITIONS: {}", NUM_ZK_REPETITIONS);
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("usize::max: {}", usize::MAX).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("usize::max: {}", usize::MAX);
+    // #[cfg(target_arch = "wasm32")]
+    // console::log_1(&format!("OVERFLOW CHECK ss: {}", ss).into());
+    // #[cfg(not(target_arch = "wasm32"))]
+    // println!("OVERFLOW CHECK ss: {}", ss);
+    // #[cfg(target_arch = "wasm32")]
+    // console::log_1(&format!("OVERFLOW CHECK NUM_ZK_REPETITIONS: {}", NUM_ZK_REPETITIONS).into());
+    // #[cfg(not(target_arch = "wasm32"))]
+    // println!("OVERFLOW CHECK NUM_ZK_REPETITIONS: {}", NUM_ZK_REPETITIONS);
+    // #[cfg(target_arch = "wasm32")]
+    // console::log_1(&format!("usize::max: {}", usize::MAX).into());
+    // #[cfg(not(target_arch = "wasm32"))]
+    // println!("usize::max: {}", usize::MAX);
     let _usize_max = usize::MAX;
     let zz: u64 = 2 * (NUM_ZK_REPETITIONS as u64) * (ss as u64);
     let range: u64 = zz - 1 + (ss as u64) + 1;
@@ -259,6 +260,11 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
         let cc = G1Projective::batch_normalize_array(&y0_g1_tbl.mul2_array(&beta, &sigma));
 
         let first_move = FirstMoveChunking::from(y0.clone(), bb.clone(), cc);
+        #[cfg(target_arch = "wasm32")]
+        console::log_1(&format!("first_move: {:#?}", first_move).into());
+        #[cfg(not(target_arch = "wasm32"))]
+        println!("first_move: {:#?}", first_move);
+
         // Verifier's challenge.
         let first_challenge = ChunksOracle::new(instance, &first_move).get_all_chunks(n as usize, m as usize);
 
@@ -277,6 +283,10 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
                     });
                 });
             acc += &sigma[k as usize];
+            #[cfg(target_arch = "wasm32")]
+            console::log_1(&format!("acc: {:#?}", acc).into());
+            #[cfg(not(target_arch = "wasm32"))]
+            println!("acc: {:#?}", acc);
 
             acc
         });
