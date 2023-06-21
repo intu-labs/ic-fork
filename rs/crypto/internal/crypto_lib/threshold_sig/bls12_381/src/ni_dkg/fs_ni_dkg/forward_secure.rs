@@ -698,6 +698,8 @@ impl EncryptionWitness {
     }
 }
 
+use web_sys::console;
+
 /// Encrypt chunks. Returns ciphertext as well as the witness for later use
 /// in the NIZK proofs.
 pub fn enc_chunks<R: RngCore + CryptoRng>(
@@ -741,6 +743,11 @@ pub fn enc_chunks<R: RngCore + CryptoRng>(
     let id_h_tbl = G2Projective::compute_mul2_tbl(&id, &G2Projective::from(&sys.h));
 
     let zz = G2Projective::batch_normalize_array(&id_h_tbl.mul2_array(&r, &s));
+    #[cfg(target_arch = "wasm32")]
+    console::log_1(&format!("zz: {:#?}", zz).into());
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("zz: {:#?}", zz);
+
 
     let witness = EncryptionWitness { r };
 
