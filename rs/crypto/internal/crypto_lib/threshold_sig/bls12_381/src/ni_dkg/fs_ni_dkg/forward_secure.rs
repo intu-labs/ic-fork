@@ -297,6 +297,7 @@ impl PublicKeyWithPop {
 }
 
 /// NI-DKG system parameters
+#[derive(Clone, Debug)]
 pub struct SysParam {
     f0: G2Affine,       // f_0 in the paper.
     f: Vec<G2Affine>,   // f_1, ..., f_{lambda_T} in the paper.

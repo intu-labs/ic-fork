@@ -143,6 +143,16 @@ pub fn encrypt_and_prove(
     #[cfg(not(target_arch = "wasm32"))]
     println!("keys_and_messages: {:#?}", keys_and_messages);
 
+    #[cfg(target_arch = "wasm32")]
+    console::log_1(&format!("associated_data: {:#?}", associated_data).into());
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("associated_data: {:#?}", associated_data);
+
+    #[cfg(target_arch = "wasm32")]
+    console::log_1(&format!("crypto::SysParam::global(): {:#?}", crypto::SysParam::global()).into());
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("crypto::SysParam::global(): {:#?}", crypto::SysParam::global());
+
     let mut rng = seed.into_rng();
     let (ciphertext, encryption_witness) = crypto::enc_chunks(
         &keys_and_messages,
