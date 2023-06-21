@@ -283,9 +283,9 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
 
         let zs_in_range = z_s
             .iter()
-            .map(|z| zz_big.ct_compare(z) as isize)
-            .sum::<isize>() as usize
-            == NUM_ZK_REPETITIONS;
+            .map(|z| zz_big.ct_compare(z) as i64)
+            .sum::<i64>() as u64
+            == NUM_ZK_REPETITIONS as u64;
 
         if zs_in_range {
             break (first_move, first_challenge, z_s);
@@ -322,10 +322,10 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
 
     let second_move = SecondMoveChunking::from(&z_s, &dd, &yy);
 
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("first_challenge: {:#?}", first_challenge).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("first_challenge: {:#?}", first_challenge);
+    // #[cfg(target_arch = "wasm32")]
+    // console::log_1(&format!("first_challenge: {:#?}", first_challenge).into());
+    // #[cfg(not(target_arch = "wasm32"))]
+    // println!("first_challenge: {:#?}", first_challenge);
 
     // Second verifier's challege. Forth move in the protocol.
     // x = oracle(e, z_s, dd, yy)
