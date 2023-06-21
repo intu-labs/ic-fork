@@ -331,7 +331,7 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
     for e_i in first_challenge.iter() {
         let mut xpow_e_ij = Vec::with_capacity(e_i.len());
         for j in 0..e_i.len() {
-            xpow_e_ij.push(Scalar::muln_usize_vartime(&xpowers, &e_i[j]));
+            xpow_e_ij.push(Scalar::muln_u64_vartime(&xpowers, &e_i[j]));
         }
 
         let z_rk = Scalar::muln_vartime(&witness.scalars_r, &xpow_e_ij) + &delta[delta_idx];
@@ -405,7 +405,7 @@ pub fn verify_chunking(
         for (i, e_i) in e.iter().enumerate() {
             let e_ijk_polynomials: Vec<_> = e_i
                 .iter()
-                .map(|e_ij| Scalar::muln_usize_vartime(&xpowers, e_ij))
+                .map(|e_ij| Scalar::muln_u64_vartime(&xpowers, e_ij))
                 .collect();
 
             let rj_e_ijk =
