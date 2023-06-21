@@ -240,8 +240,17 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
     let y0_g1_tbl =
         G1Projective::compute_mul2_tbl(&G1Projective::from(&y0), &G1Projective::from(g1));
 
+    #[cfg(target_arch = "wasm32")]
+    console::log_1(&format!("y0: {:#?}, g1: {:#?}", y0, g1).into());
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("y0: {:#?}, g1: {:#?}", y0, g1);
+
     let beta = Scalar::batch_random_array::<NUM_ZK_REPETITIONS, R>(rng);
     let bb = g1.batch_mul_array(&beta);
+    #[cfg(target_arch = "wasm32")]
+    console::log_1(&format!("bb: {:#?}", bb).into());
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("bb: {:#?}", bb);
 
     let (first_move, first_challenge, z_s) = loop {
         let sigma = [(); NUM_ZK_REPETITIONS]
