@@ -138,6 +138,10 @@ pub fn encrypt_and_prove(
 
         v
     };
+    #[cfg(target_arch = "wasm32")]
+    console::log_1(&format!("keys_and_messages: {:#?}", keys_and_messages).into());
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("keys_and_messages: {:#?}", keys_and_messages);
 
     let mut rng = seed.into_rng();
     let (ciphertext, encryption_witness) = crypto::enc_chunks(
