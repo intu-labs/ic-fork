@@ -311,6 +311,14 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
     console::log_1(&format!("yy: {:#?}", yy).into());
     #[cfg(not(target_arch = "wasm32"))]
     println!("yy: {:#?}", yy);
+    #[cfg(target_arch = "wasm32")]
+    console::log_1(&format!("dd: {:#?}", dd).into());
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("dd: {:#?}", dd);
+    #[cfg(target_arch = "wasm32")]
+    console::log_1(&format!("z_s: {:#?}", z_s).into());
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("z_s: {:#?}", z_s);
 
     let second_move = SecondMoveChunking::from(&z_s, &dd, &yy);
 
