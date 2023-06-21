@@ -547,6 +547,10 @@ impl ChunksOracle {
         map.insert_hashed("number-of-parallel-repetitions", &NUM_ZK_REPETITIONS);
 
         let hash = random_oracle(DOMAIN_PROOF_OF_CHUNKING_ORACLE, &map);
+        #[cfg(target_arch = "wasm32")]
+        console::log_1(&format!("ChunksOracle hash: {:#?}", hash).into());
+        #[cfg(not(target_arch = "wasm32"))]
+        println!("ChunksOracle hash: {:#?}", hash);
 
         let rng = ChaCha20Rng::from_seed(hash);
         Self { rng }
@@ -569,8 +573,8 @@ impl ChunksOracle {
     fn get_all_chunks(&mut self, n: usize, m: usize) -> Vec<Vec<Vec<u64>>> {
         (0..n)
             .map(|_| {
-                (0..m)
-                    .map(|_| (0..NUM_ZK_REPETITIONS).map(|_| self.get_chunk()).collect())
+                (0..m as u64)
+                    .map(|_| (0..(NUM_ZK_REPETITIONS as u64)).map(|_| self.get_chunk()).collect())
                     .collect()
             })
             .collect()
