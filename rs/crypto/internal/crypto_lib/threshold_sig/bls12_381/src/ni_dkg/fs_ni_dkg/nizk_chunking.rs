@@ -322,6 +322,11 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
 
     let second_move = SecondMoveChunking::from(&z_s, &dd, &yy);
 
+    #[cfg(target_arch = "wasm32")]
+    console::log_1(&format!("first_challenge: {:#?}", first_challenge).into());
+    #[cfg(not(target_arch = "wasm32"))]
+    println!("first_challenge: {:#?}", first_challenge);
+
     // Second verifier's challege. Forth move in the protocol.
     // x = oracle(e, z_s, dd, yy)
     let second_challenge = chunking_proof_challenge_oracle(&first_challenge, &second_move);
