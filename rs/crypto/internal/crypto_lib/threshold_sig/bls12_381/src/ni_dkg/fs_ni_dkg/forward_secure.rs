@@ -730,8 +730,14 @@ pub fn enc_chunks<R: RngCore + CryptoRng>(
 
             let chunks = ptext.chunks_as_scalars();
 
+            let points = pk_g1_tbl.mul2_array(&r, &chunks);
+            #[cfg(target_arch = "wasm32")]
+            console::log_1(&format!("points: {:#?}", points).into());
+            #[cfg(not(target_arch = "wasm32"))]
+            println!("points: {:#?}", points);
+
             let enc_chunks =
-                G1Projective::batch_normalize_array(&pk_g1_tbl.mul2_array(&r, &chunks));
+                G1Projective::batch_normalize_array(&points);
 
             cc.push(enc_chunks);
         }
