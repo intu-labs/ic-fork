@@ -11,8 +11,6 @@ use ic_crypto_internal_types::sign::threshold_sig::ni_dkg::ni_dkg_groth20_bls12_
 use rand::{CryptoRng, Rng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
-use web_sys::console;
-
 /// Domain separators for the zk proof of chunking
 const DOMAIN_PROOF_OF_CHUNKING_ORACLE: &str = "ic-zk-proof-of-chunking-chunking";
 const DOMAIN_PROOF_OF_CHUNKING_CHALLENGE: &str = "ic-zk-proof-of-chunking-challenge";
@@ -117,7 +115,6 @@ pub struct ProofChunking {
 }
 
 /// First move of the prover in the zero-knowledge proof of chunking.
-#[derive(Clone, Debug, PartialEq, Eq)]
 struct FirstMoveChunking {
     y0: G1Affine,
     bb: [G1Affine; NUM_ZK_REPETITIONS],
@@ -211,28 +208,12 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
     let n = instance.public_keys.len() as u64;
 
     let ss = n * m * (CHUNK_SIZE as u64 - 1) * CHALLENGE_MASK as u64;
-    // #[cfg(target_arch = "wasm32")]
-    // console::log_1(&format!("OVERFLOW CHECK ss: {}", ss).into());
-    // #[cfg(not(target_arch = "wasm32"))]
-    // println!("OVERFLOW CHECK ss: {}", ss);
-    // #[cfg(target_arch = "wasm32")]
-    // console::log_1(&format!("OVERFLOW CHECK NUM_ZK_REPETITIONS: {}", NUM_ZK_REPETITIONS).into());
-    // #[cfg(not(target_arch = "wasm32"))]
-    // println!("OVERFLOW CHECK NUM_ZK_REPETITIONS: {}", NUM_ZK_REPETITIONS);
-    // #[cfg(target_arch = "wasm32")]
-    // console::log_1(&format!("usize::max: {}", usize::MAX).into());
-    // #[cfg(not(target_arch = "wasm32"))]
-    // println!("usize::max: {}", usize::MAX);
     let _usize_max = usize::MAX;
     let zz: u64 = 2 * (NUM_ZK_REPETITIONS as u64) * (ss as u64);
     let range: u64 = zz - 1 + (ss as u64) + 1;
-
     let zz_big = Scalar::from_u64(zz);
     let p_sub_s = Scalar::from_u64(ss).neg();
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("zz_big: {:#?}, p_sub_s: {:#?}", zz_big, p_sub_s).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("zz_big: {:#?}, p_sub_s: {:#?}", zz_big, p_sub_s);
+
     // y0 <- getRandomG1
     let y0 = G1Affine::hash(b"ic-crypto-nizk-chunking-proof-y0", &rng.gen::<[u8; 32]>());
 
@@ -241,17 +222,8 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
     let y0_g1_tbl =
         G1Projective::compute_mul2_tbl(&G1Projective::from(&y0), &G1Projective::from(g1));
 
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("y0: {:#?}, g1: {:#?}", y0, g1).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("y0: {:#?}, g1: {:#?}", y0, g1);
-
     let beta = Scalar::batch_random_array::<NUM_ZK_REPETITIONS, R>(rng);
     let bb = g1.batch_mul_array(&beta);
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("bb: {:#?}", bb).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("bb: {:#?}", bb);
 
     let (first_move, first_challenge, z_s) = loop {
         let sigma = [(); NUM_ZK_REPETITIONS]
@@ -260,39 +232,12 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
         let cc = G1Projective::batch_normalize_array(&y0_g1_tbl.mul2_array(&beta, &sigma));
 
         let first_move = FirstMoveChunking::from(y0.clone(), bb.clone(), cc);
-        // #[cfg(target_arch = "wasm32")]
-        // console::log_1(&format!("first_move: {:#?}", first_move).into());
-        // #[cfg(not(target_arch = "wasm32"))]
-        // println!("first_move: {:#?}", first_move);
-
         // Verifier's challenge.
-        #[cfg(target_arch = "wasm32")]
-        console::log_1(&format!("n: {:?}, m: {:#?}", n, m).into());
-        #[cfg(not(target_arch = "wasm32"))]
-        println!("n: {:?}, m: {:#?}", n, m);
         let first_challenge = ChunksOracle::new(instance, &first_move).get_all_chunks(n as usize, m as usize);
-        #[cfg(target_arch = "wasm32")]
-        console::log_1(&format!("first_challenge: {:#?}", first_challenge[0][0]).into());
-        #[cfg(not(target_arch = "wasm32"))]
-        println!("first_challenge: {:#?}", first_challenge[0][0]);
 
         // z_s = [sum [e_ijk * s_ij | i <- [1..n], j <- [1..m]] + sigma_k | k <- [1..l]]
 
         let iota: [u64; NUM_ZK_REPETITIONS] = std::array::from_fn(|i| i as u64);
-        #[cfg(target_arch = "wasm32")]
-        console::log_1(&format!("iota: {:#?}", iota).into());
-        #[cfg(not(target_arch = "wasm32"))]
-        println!("iota: {:#?}", iota);
-
-        // SHAWN: witness and instance match
-        // #[cfg(target_arch = "wasm32")]
-        // console::log_1(&format!("witness: {:#?}", witness).into());
-        // #[cfg(not(target_arch = "wasm32"))]
-        // println!("witness: {:#?}", witness);
-        // #[cfg(target_arch = "wasm32")]
-        // console::log_1(&format!("instance: {:#?}", instance).into());
-        // #[cfg(not(target_arch = "wasm32"))]
-        // println!("instance: {:#?}", instance);
 
         let z_s = iota.map(|k| {
             let mut acc = Scalar::zero();
@@ -300,25 +245,11 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
                 .iter()
                 .zip(witness.scalars_s.iter())
             .for_each(|(e_i, s_i)| {
-                    // #[cfg(target_arch = "wasm32")]
-                    // console::log_1(&format!("k: {:?}, e_i: {:#?}, s_i: {:#?}", k, e_i[0], s_i).into());
-                    // #[cfg(not(target_arch = "wasm32"))]
-                    // println!("k: {:?}, e_i: {:#?}, s_i: {:#?}", k, e_i[0], s_i);
                     e_i.iter().zip(s_i.iter()).for_each(|(e_ij, s_ij)| {
-                        // SHAWN: e_ij wrong at this point
-                        // #[cfg(target_arch = "wasm32")]
-                        // console::log_1(&format!("k: {:?}, e_ij: {:#?}, s_ij: {:#?}", k, e_ij[k as usize], s_ij).into());
-                        // #[cfg(not(target_arch = "wasm32"))]
-                        // println!("k: {:?}, e_ij: {:#?}, s_ij: {:#?}", k, e_ij[k as usize], s_ij);
-            
                         acc += Scalar::from_u64(e_ij[k as usize]) * s_ij;
                     });
                 });
             acc += &sigma[k as usize];
-            #[cfg(target_arch = "wasm32")]
-            console::log_1(&format!("acc: {:#?}", acc).into());
-            #[cfg(not(target_arch = "wasm32"))]
-            println!("acc: {:#?}", acc);
 
             acc
         });
@@ -358,34 +289,11 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
         G1Projective::muln_affine_vartime(&y0_and_pk, &delta).to_affine()
     };
 
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("yy: {:#?}", yy).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("yy: {:#?}", yy);
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("dd: {:#?}", dd).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("dd: {:#?}", dd);
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("z_s: {:#?}", z_s).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("z_s: {:#?}", z_s);
-
     let second_move = SecondMoveChunking::from(&z_s, &dd, &yy);
-
-    // #[cfg(target_arch = "wasm32")]
-    // console::log_1(&format!("first_challenge: {:#?}", first_challenge).into());
-    // #[cfg(not(target_arch = "wasm32"))]
-    // println!("first_challenge: {:#?}", first_challenge);
 
     // Second verifier's challege. Forth move in the protocol.
     // x = oracle(e, z_s, dd, yy)
     let second_challenge = chunking_proof_challenge_oracle(&first_challenge, &second_move);
-
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("second_challenge: {:#?}", second_challenge).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("second_challenge: {:#?}", second_challenge);
 
     let xpowers = Scalar::xpowers(&second_challenge, NUM_ZK_REPETITIONS);
 
@@ -406,10 +314,6 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
     }
 
     let z_beta = Scalar::muln_vartime(&beta, &xpowers) + &delta[0];
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("z_beta: {:#?}", z_beta).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("z_beta: {:#?}", z_beta);
 
     ProofChunking {
         y0,
@@ -442,11 +346,6 @@ pub fn verify_chunking(
     let ss = n * m * (CHUNK_SIZE as u64 - 1) * CHALLENGE_MASK as u64;
     let zz = 2 * (NUM_ZK_REPETITIONS as u64) * ss;
     let zz_big = Scalar::from_u64(zz);
-
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("verify_chunking zz_big: {:#?}", zz_big).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("verify_chunking zz_big: {:#?}", zz_big);
 
     for z_sk in nizk.z_s.iter() {
         if z_sk >= &zz_big {
@@ -554,20 +453,8 @@ impl ChunksOracle {
         map.insert_hashed("instance", instance);
         map.insert_hashed("first-move", first_move);
         map.insert_hashed("number-of-parallel-repetitions", &(NUM_ZK_REPETITIONS as u64));
-        // #[cfg(target_arch = "wasm32")]
-        // console::log_1(&format!("ChunksOracle instance: {:#?}", instance).into());
-        // #[cfg(not(target_arch = "wasm32"))]
-        // println!("ChunksOracle instance: {:#?}", instance);
-        // #[cfg(target_arch = "wasm32")]
-        // console::log_1(&format!("ChunksOracle first_move: {:#?}", first_move).into());
-        // #[cfg(not(target_arch = "wasm32"))]
-        // println!("ChunksOracle first_move: {:#?}", first_move);
 
         let hash = random_oracle(DOMAIN_PROOF_OF_CHUNKING_ORACLE, &map);
-        #[cfg(target_arch = "wasm32")]
-        console::log_1(&format!("ChunksOracle hash: {:#?}", hash).into());
-        #[cfg(not(target_arch = "wasm32"))]
-        println!("ChunksOracle hash: {:?}", hash);
 
         let rng = ChaCha20Rng::from_seed(hash);
         Self { rng }

@@ -25,8 +25,6 @@ use rand::{CryptoRng, RngCore};
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 
-use web_sys::console;
-
 mod crypto {
     pub use crate::ni_dkg::fs_ni_dkg::encryption_key_pop::EncryptionKeyPop;
     pub use crate::ni_dkg::fs_ni_dkg::forward_secure::{
@@ -138,22 +136,7 @@ pub fn encrypt_and_prove(
 
         v
     };
-    /*
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("keys_and_messages: {:#?}", keys_and_messages).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("keys_and_messages: {:#?}", keys_and_messages);
 
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("associated_data: {:#?}", associated_data).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("associated_data: {:#?}", associated_data);
-
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("crypto::SysParam::global(): {:#?}", crypto::SysParam::global()).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("crypto::SysParam::global(): {:#?}", crypto::SysParam::global());
-*/
     let mut rng = seed.into_rng();
     let (ciphertext, encryption_witness) = crypto::enc_chunks(
         &keys_and_messages,
@@ -162,10 +145,6 @@ pub fn encrypt_and_prove(
         crypto::SysParam::global(),
         &mut rng,
     );
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("ciphertext.serialize(): {:#?}", ciphertext.serialize()).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("ciphertext.serialize(): {:#?}", ciphertext.serialize());
 
     let chunking_proof = prove_chunking(
         &public_keys,
@@ -174,10 +153,6 @@ pub fn encrypt_and_prove(
         &encryption_witness,
         &mut rng,
     );
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("chunking_proof.serialize(): {:#?}", chunking_proof.serialize()).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("chunking_proof.serialize(): {:#?}", chunking_proof.serialize());
 
     let public_coefficients = G2Affine::batch_deserialize(&public_coefficients.coefficients)
         .map_err(|_| EncryptAndZKProveError::MalformedPublicCoefficients)?;
@@ -191,12 +166,7 @@ pub fn encrypt_and_prove(
         &mut rng,
     );
 
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("sharing_proof.serialize(): {:#?}", sharing_proof.serialize()).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("sharing_proof.serialize(): {:#?}", sharing_proof.serialize());
-
-    //#[cfg(test)]
+    #[cfg(test)]
     {
         assert_eq!(
             crypto::verify_chunking(

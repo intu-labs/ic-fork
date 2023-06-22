@@ -297,7 +297,6 @@ impl PublicKeyWithPop {
 }
 
 /// NI-DKG system parameters
-#[derive(Clone, Debug)]
 pub struct SysParam {
     f0: G2Affine,       // f_0 in the paper.
     f: Vec<G2Affine>,   // f_1, ..., f_{lambda_T} in the paper.
@@ -698,8 +697,6 @@ impl EncryptionWitness {
     }
 }
 
-use web_sys::console;
-
 /// Encrypt chunks. Returns ciphertext as well as the witness for later use
 /// in the NIZK proofs.
 pub fn enc_chunks<R: RngCore + CryptoRng>(
@@ -731,10 +728,6 @@ pub fn enc_chunks<R: RngCore + CryptoRng>(
             let chunks = ptext.chunks_as_scalars();
 
             let points = pk_g1_tbl.mul2_array(&r, &chunks);
-            #[cfg(target_arch = "wasm32")]
-            console::log_1(&format!("points: {:#?}", points).into());
-            #[cfg(not(target_arch = "wasm32"))]
-            println!("points: {:#?}", points);
 
             let enc_chunks =
                 G1Projective::batch_normalize_array(&points);
@@ -746,34 +739,11 @@ pub fn enc_chunks<R: RngCore + CryptoRng>(
     };
 
     let id = ftau_extended(&cc, &rr, &ss, sys, epoch, associated_data);
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("id: {:#?}", id).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("id: {:#?}", id);
 
     let id_h_tbl = G2Projective::compute_mul2_tbl(&id, &G2Projective::from(&sys.h));
 
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("r: {:#?}", r).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("r: {:#?}", r);
-
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("s: {:#?}", s).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("s: {:#?}", s);
-
     let points = id_h_tbl.mul2_array(&r, &s);
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("points2: {:#?}", points).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("points2: {:#?}", points);
     let zz = G2Projective::batch_normalize_array(&points);
-    #[cfg(target_arch = "wasm32")]
-    console::log_1(&format!("zz: {:#?}", zz).into());
-    #[cfg(not(target_arch = "wasm32"))]
-    println!("zz: {:#?}", zz);
-
 
     let witness = EncryptionWitness { r };
 
