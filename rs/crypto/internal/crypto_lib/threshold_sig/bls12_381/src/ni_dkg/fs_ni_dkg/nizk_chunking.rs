@@ -208,7 +208,6 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
     let n = instance.public_keys.len() as u64;
 
     let ss = n * m * (CHUNK_SIZE as u64 - 1) * CHALLENGE_MASK as u64;
-    let _usize_max = usize::MAX;
     let zz: u64 = 2 * (NUM_ZK_REPETITIONS as u64) * (ss as u64);
     let range: u64 = zz - 1 + (ss as u64) + 1;
     let zz_big = Scalar::from_u64(zz);

@@ -727,10 +727,8 @@ pub fn enc_chunks<R: RngCore + CryptoRng>(
 
             let chunks = ptext.chunks_as_scalars();
 
-            let points = pk_g1_tbl.mul2_array(&r, &chunks);
-
             let enc_chunks =
-                G1Projective::batch_normalize_array(&points);
+                G1Projective::batch_normalize_array(&pk_g1_tbl.mul2_array(&r, &chunks));
 
             cc.push(enc_chunks);
         }
@@ -739,11 +737,9 @@ pub fn enc_chunks<R: RngCore + CryptoRng>(
     };
 
     let id = ftau_extended(&cc, &rr, &ss, sys, epoch, associated_data);
-
     let id_h_tbl = G2Projective::compute_mul2_tbl(&id, &G2Projective::from(&sys.h));
 
-    let points = id_h_tbl.mul2_array(&r, &s);
-    let zz = G2Projective::batch_normalize_array(&points);
+    let zz = G2Projective::batch_normalize_array(&id_h_tbl.mul2_array(&r, &s));
 
     let witness = EncryptionWitness { r };
 
