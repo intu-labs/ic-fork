@@ -1465,8 +1465,8 @@ macro_rules! declare_mul2_table_impl {
                 a: &[Scalar; N],
                 b: &[Scalar; N],
             ) -> [$projective; N] {
-                let iota: [usize; N] = std::array::from_fn(|i| i);
-                iota.map(|i| self.mul2(&a[i], &b[i]))
+                let iota: [u64; N] = std::array::from_fn(|i| i as u64);
+                iota.map(|i| self.mul2(&a[i as usize], &b[i as usize]))
             }
         }
     };
