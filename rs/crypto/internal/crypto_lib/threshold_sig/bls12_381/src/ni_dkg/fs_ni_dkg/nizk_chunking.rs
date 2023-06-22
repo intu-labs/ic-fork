@@ -276,7 +276,7 @@ pub fn prove_chunking<R: RngCore + CryptoRng>(
     // delta <- replicate (n + 1) getRandom
     // dd = map (g1^) delta
     // Y = product [y_i^delta_i | i <- [0..n]]
-    let delta = Scalar::batch_random(rng, n as usize + 1);
+    let delta = Scalar::batch_random(rng, n + 1);
     let dd = g1.batch_mul(&delta);
 
     let yy = {
