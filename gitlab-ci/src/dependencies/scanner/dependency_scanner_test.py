@@ -5,7 +5,8 @@ from unittest.mock import Mock, patch
 import pytest
 from model.dependency import Dependency
 from model.finding import Finding
-from model.repository import Project, Repository
+from model.project import Project
+from model.repository import Repository
 from model.security_risk import SecurityRisk
 from model.team import Team
 from model.user import User
@@ -170,7 +171,7 @@ def test_on_periodic_job_one_finding_in_jira(jira_lib_mock):
     sub2 = Mock()
     fake_bazel = FakeBazel(2)
     scanner_job = DependencyScanner(fake_bazel, jira_lib_mock, [sub1, sub2])
-    repos = [Repository("ic", "https://gitlab.com/dfinity-lab/public/ic", [Project(name="ic", path="ic", owner=Team.NODE_TEAM)])]
+    repos = [Repository("ic", "https://gitlab.com/dfinity-lab/public/ic", [Project(name="ic", path="ic", owner_by_path={'bear': [Team.NODE_TEAM]})])]
 
     scanner_job.do_periodic_scan(repos)
 

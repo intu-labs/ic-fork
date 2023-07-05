@@ -21,7 +21,11 @@ pub enum RecoveryError {
     ParsingError(serde_json::Error),
     SerializationError(serde_json::Error),
     UnexpectedError(String),
+    StateToolError(String),
     CheckpointError(String, CheckpointError),
+    RegistryError(String),
+    ValidationFailed(String),
+    AgentError(String),
     StepSkipped,
 }
 
@@ -56,6 +60,10 @@ impl RecoveryError {
             e,
         )
     }
+
+    pub fn validation_failed(message: impl Display, error: impl Display) -> Self {
+        RecoveryError::ValidationFailed(format!("{}: {}", message, error))
+    }
 }
 
 impl fmt::Display for RecoveryError {
@@ -88,6 +96,12 @@ impl fmt::Display for RecoveryError {
             RecoveryError::CheckpointError(msg, e) => {
                 write!(f, "Checkpoint error, message: {}, error: {}", msg, e)
             }
+            RecoveryError::RegistryError(msg) => write!(f, "Registry error, message: {}", msg),
+            RecoveryError::StateToolError(msg) => write!(f, "State tool error, message: {}", msg),
+            RecoveryError::ValidationFailed(msg) => {
+                write!(f, "Validation failed, message: {}", msg)
+            }
+            RecoveryError::AgentError(msg) => write!(f, "ic-agent error, message: {}", msg),
         }
     }
 }

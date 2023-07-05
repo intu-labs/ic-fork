@@ -1,8 +1,5 @@
-use crate::{
-    AuthenticationError, HttpRequestVerifier, IngressMessageContent, RequestValidationError,
-};
+use crate::{AuthenticationError, HttpRequestVerifier, RequestValidationError};
 use ic_crypto_temp_crypto::{NodeKeysToGenerate, TempCryptoComponent};
-use ic_interfaces::crypto::IngressSigVerifier;
 use ic_interfaces::time_source::TimeSource;
 use ic_protobuf::registry::crypto::v1::PublicKey;
 use ic_protobuf::types::v1::PrincipalId as PrincipalIdProto;
@@ -10,11 +7,11 @@ use ic_protobuf::types::v1::SubnetId as SubnetIdProto;
 use ic_registry_client_fake::FakeRegistryClient;
 use ic_registry_keys::{make_crypto_threshold_signing_pubkey_key, ROOT_SUBNET_ID_KEY};
 use ic_registry_proto_data_provider::ProtoRegistryDataProvider;
-use ic_types::crypto::threshold_sig::ThresholdSigPublicKey;
-use ic_types::malicious_flags::MaliciousFlags;
-use ic_types::messages::HttpRequest;
+use ic_types::crypto::threshold_sig::{IcRootOfTrust, RootOfTrustProvider, ThresholdSigPublicKey};
+use ic_types::messages::{HttpRequest, HttpRequestContent};
 use ic_types::time::UNIX_EPOCH;
 use ic_types::{PrincipalId, RegistryVersion, SubnetId, Time};
+use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -28,7 +25,7 @@ const IC_NNS_ROOT_PUBLIC_KEY_BASE64: &str = r#"MIGCMB0GDSsGAQQBgtx8BQMBAgEGDCsGA
 /// An implementation of [`HttpRequestVerifier`] to verify ingress messages.
 pub struct IngressMessageVerifier {
     time_source: Arc<dyn TimeSource>,
-    crypto: Arc<dyn IngressSigVerifier + Send + Sync>,
+    validator: ic_validator::HttpRequestVerifierImpl,
 }
 
 impl Default for IngressMessageVerifier {
@@ -96,12 +93,12 @@ impl IngressMessageVerifier {
         let (registry_client, registry_data) = registry_with_root_of_trust(root_of_trust);
         IngressMessageVerifier {
             time_source,
-            crypto: Arc::new(
+            validator: ic_validator::HttpRequestVerifierImpl::new(Arc::new(
                 TempCryptoComponent::builder()
                     .with_keys(NodeKeysToGenerate::none())
                     .with_registry_client_and_data(registry_client, registry_data)
                     .build(),
-            ),
+            )),
         }
     }
 
@@ -197,15 +194,18 @@ fn nns_root_public_key() -> ThresholdSigPublicKey {
         .expect("Failed to decode mainnet public key.")
 }
 
-impl<C: IngressMessageContent> HttpRequestVerifier<C> for IngressMessageVerifier {
+impl<C: HttpRequestContent> HttpRequestVerifier<C> for IngressMessageVerifier
+where
+    ic_validator::HttpRequestVerifierImpl: ic_validator::HttpRequestVerifier<C>,
+{
     fn validate_request(&self, request: &HttpRequest<C>) -> Result<(), RequestValidationError> {
-        ic_validator::validate_request(
+        ic_validator::HttpRequestVerifier::validate_request(
+            &self.validator,
             request,
-            self.crypto.as_ref(),
             self.time_source.get_relative_time(),
             DUMMY_REGISTRY_VERSION,
-            &MaliciousFlags::default(),
         )
+        .map(|_| ())
         .map_err(to_validation_error)
     }
 }
@@ -323,5 +323,27 @@ impl TimeSource for TimeProvider {
                         .expect("SystemTime is before UNIX EPOCH!")
             }
         }
+    }
+}
+
+pub struct ConstantRootOfTrustProvider {
+    root_of_trust: IcRootOfTrust,
+}
+
+impl ConstantRootOfTrustProvider {
+    #[allow(dead_code)]
+    //TODO CRP-2046: use this to instantiate provider
+    fn new<T: Into<IcRootOfTrust>>(root_of_trust: T) -> Self {
+        Self {
+            root_of_trust: root_of_trust.into(),
+        }
+    }
+}
+
+impl RootOfTrustProvider for ConstantRootOfTrustProvider {
+    type Error = Infallible;
+
+    fn root_of_trust(&self) -> Result<IcRootOfTrust, Self::Error> {
+        Ok(self.root_of_trust)
     }
 }

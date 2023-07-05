@@ -17,6 +17,7 @@ mod query;
 mod read_state;
 mod state_reader_executor;
 mod status;
+mod threads;
 mod types;
 mod validator_executor;
 
@@ -39,7 +40,7 @@ use crate::{
     validator_executor::ValidatorExecutor,
 };
 use byte_unit::Byte;
-use crossbeam::atomic::AtomicCell;
+use crossbeam::{atomic::AtomicCell, channel::Sender};
 use http::method::Method;
 use hyper::{server::conn::Http, Body, Request, Response, StatusCode};
 use ic_async_utils::{receive_body, start_tcp_listener};
@@ -49,11 +50,13 @@ use ic_crypto_tls_interfaces::TlsHandshake;
 use ic_crypto_tree_hash::{lookup_path, LabeledTree, Path};
 use ic_crypto_utils_threshold_sig_der::parse_threshold_sig_key_from_der;
 use ic_interfaces::{
+    artifact_pool::UnvalidatedArtifact,
     consensus_pool::ConsensusPoolCache,
     crypto::IngressSigVerifier,
     execution_environment::{IngressFilterService, QueryExecutionService},
+    ingress_pool::IngressPoolThrottler,
+    time_source::TimeSource,
 };
-use ic_interfaces_p2p::IngressIngestionService;
 use ic_interfaces_registry::RegistryClient;
 use ic_interfaces_state_manager::StateReader;
 use ic_logger::{debug, error, fatal, info, warn, ReplicaLogger};
@@ -69,7 +72,7 @@ use ic_types::{
     malicious_flags::MaliciousFlags,
     messages::{
         Blob, Certificate, CertificateDelegation, HttpReadState, HttpReadStateContent,
-        HttpReadStateResponse, HttpRequestEnvelope, ReplicaHealthStatus,
+        HttpReadStateResponse, HttpRequestEnvelope, ReplicaHealthStatus, SignedIngress,
     },
     time::expiry_time_from_now,
     CanisterId, NodeId, SubnetId,
@@ -233,12 +236,15 @@ pub fn start_server(
     metrics_registry: &MetricsRegistry,
     config: Config,
     ingress_filter: IngressFilterService,
-    ingress_sender: IngressIngestionService,
     query_execution_service: QueryExecutionService,
+    ingress_throttler: Arc<RwLock<dyn IngressPoolThrottler + Send + Sync>>,
+    ingress_tx: Sender<UnvalidatedArtifact<SignedIngress>>,
+    time_source: Arc<dyn TimeSource>,
     state_reader: Arc<dyn StateReader<State = ReplicatedState>>,
     registry_client: Arc<dyn RegistryClient>,
     tls_handshake: Arc<dyn TlsHandshake + Send + Sync>,
     ingress_verifier: Arc<dyn IngressSigVerifier + Send + Sync>,
+    node_id: NodeId,
     subnet_id: SubnetId,
     nns_subnet_id: SubnetId,
     log: ReplicaLogger,
@@ -266,17 +272,18 @@ pub fn start_server(
     let delegation_from_nns = Arc::new(RwLock::new(None));
     let health_status = Arc::new(AtomicCell::new(ReplicaHealthStatus::Starting));
     let state_reader_executor = StateReaderExecutor::new(state_reader);
-    let validator_executor = ValidatorExecutor::new(ingress_verifier, log.clone());
     let call_service = CallService::new_service(
         config.clone(),
         log.clone(),
         metrics.clone(),
+        node_id,
         subnet_id,
+        time_source,
         Arc::clone(&registry_client),
-        validator_executor.clone(),
-        ingress_sender,
+        ValidatorExecutor::new(ingress_verifier.clone(), &malicious_flags, log.clone()),
         ingress_filter,
-        malicious_flags.clone(),
+        ingress_throttler,
+        ingress_tx,
     );
     let query_service = QueryService::new_service(
         config.clone(),
@@ -284,10 +291,9 @@ pub fn start_server(
         metrics.clone(),
         Arc::clone(&health_status),
         Arc::clone(&delegation_from_nns),
-        validator_executor.clone(),
+        ValidatorExecutor::new(ingress_verifier.clone(), &malicious_flags, log.clone()),
         Arc::clone(&registry_client),
         query_execution_service,
-        malicious_flags.clone(),
     );
     let read_state_service = ReadStateService::new_service(
         config.clone(),
@@ -296,9 +302,8 @@ pub fn start_server(
         Arc::clone(&health_status),
         Arc::clone(&delegation_from_nns),
         state_reader_executor.clone(),
-        validator_executor,
+        ValidatorExecutor::new(ingress_verifier.clone(), &malicious_flags, log.clone()),
         Arc::clone(&registry_client),
-        malicious_flags,
     );
     let status_service = StatusService::new_service(
         config.clone(),
@@ -690,6 +695,10 @@ async fn make_router(
             "/_/pprof/flamegraph" => {
                 timer.set_label(LABEL_REQUEST_TYPE, ApiReqType::PprofFlamegraph.into());
                 pprof_flamegraph_service
+            }
+            "/_/threads" => {
+                timer.set_label(LABEL_REQUEST_TYPE, ApiReqType::Threads.into());
+                return (threads::collect().await, timer);
             }
             _ => {
                 timer.set_label(LABEL_REQUEST_TYPE, ApiReqType::InvalidArgument.into());

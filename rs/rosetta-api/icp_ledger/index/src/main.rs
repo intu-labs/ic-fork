@@ -1,17 +1,18 @@
 use candid::{candid_method, Principal};
+use ic_canisters_http_types::{HttpRequest, HttpResponse, HttpResponseBuilder};
 use ic_cdk_macros::{init, query};
 use ic_cdk_timers::TimerId;
 use ic_icp_index::{
     GetAccountIdentifierTransactionsArgs, GetAccountIdentifierTransactionsResponse,
-    GetAccountIdentifierTransactionsResult, InitArg, TransactionWithId,
+    GetAccountIdentifierTransactionsResult, InitArg, Status, TransactionWithId,
 };
 use ic_ledger_core::block::{BlockType, EncodedBlock};
 use ic_stable_structures::memory_manager::{MemoryId, VirtualMemory};
-use ic_stable_structures::StableBTreeMap;
 use ic_stable_structures::{
     cell::Cell as StableCell, log::Log as StableLog, memory_manager::MemoryManager,
     DefaultMemoryImpl, Storable,
 };
+use ic_stable_structures::{BoundedStorable, StableBTreeMap};
 use icp_ledger::{
     AccountIdentifier, ArchivedBlocksRange, Block, BlockIndex, CandidBlock, GetBlocksArgs,
     Operation, QueryBlocksResponse, MAX_BLOCKS_PER_REQUEST,
@@ -32,6 +33,7 @@ const STATE_MEMORY_ID: MemoryId = MemoryId::new(0);
 const BLOCK_LOG_INDEX_MEMORY_ID: MemoryId = MemoryId::new(1);
 const BLOCK_LOG_DATA_MEMORY_ID: MemoryId = MemoryId::new(2);
 const ACCOUNTIDENTIFIER_BLOCK_IDS_MEMORY_ID: MemoryId = MemoryId::new(3);
+const ACCOUNTIDENTIFIER_DATA_MEMORY_ID: MemoryId = MemoryId::new(4);
 
 const DEFAULT_MAX_WAIT_TIME: Duration = Duration::from_secs(60);
 const DEFAULT_RETRY_WAIT_TIME: Duration = Duration::from_secs(10);
@@ -44,6 +46,11 @@ type BlockLog = StableLog<Vec<u8>, VM, VM>;
 // are returned in reversed order.
 type AccountIdentifierBlockIdsMapKey = ([u8; 28], Reverse<u64>);
 type AccountIdentifierBlockIdsMap = StableBTreeMap<AccountIdentifierBlockIdsMapKey, (), VM>;
+
+// The second element of this tuple is the account represented
+// as principal of type Blob<29> and the effective subaccount
+type AccountIdentifierDataMapKey = (AccountIdentifierDataType, [u8; 28]);
+type AccountIdentifierDataMap = StableBTreeMap<AccountIdentifierDataMapKey, u64, VM>;
 
 thread_local! {
     /// Static memory manager to manage the memory available for stable structures.
@@ -65,6 +72,11 @@ thread_local! {
     static ACCOUNTIDENTIFIER_BLOCK_IDS: RefCell<AccountIdentifierBlockIdsMap> = with_memory_manager(|memory_manager| {
         RefCell::new(AccountIdentifierBlockIdsMap::init(memory_manager.get(ACCOUNTIDENTIFIER_BLOCK_IDS_MEMORY_ID)))
     });
+
+    /// Map that contains account aggregated data.
+    static ACCOUNTIDENTIFIER_DATA: RefCell<AccountIdentifierDataMap> = with_memory_manager(|memory_manager| {
+        RefCell::new(AccountIdentifierDataMap::init(memory_manager.get(ACCOUNTIDENTIFIER_DATA_MEMORY_ID)))
+    });
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -74,6 +86,9 @@ struct State {
 
     /// The principal of the ledger canister that is indexed by this index.
     ledger_id: Principal,
+
+    // Last wait time in nanoseconds.
+    pub last_wait_time: Duration,
 }
 
 // NOTE: the default configuration is dysfunctional, but it's convenient to have
@@ -83,6 +98,7 @@ impl Default for State {
         Self {
             is_build_index_running: false,
             ledger_id: Principal::management_canister(),
+            last_wait_time: Duration::from_secs(0),
         }
     }
 }
@@ -97,6 +113,39 @@ impl Storable for State {
     fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
         ciborium::de::from_reader(&bytes[..]).expect("failed to decode index options")
     }
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+enum AccountIdentifierDataType {
+    #[default]
+    Balance = 0,
+}
+
+impl Storable for AccountIdentifierDataType {
+    fn to_bytes(&self) -> Cow<'_, [u8]> {
+        match self {
+            Self::Balance => Cow::Borrowed(&[0x00]),
+        }
+    }
+
+    fn from_bytes(bytes: Cow<'_, [u8]>) -> Self {
+        if bytes.len() != 1 {
+            panic!(
+                "Expected a single byte for AccountDataType but found {}",
+                bytes.len()
+            );
+        }
+        if bytes[0] == 0x00 {
+            Self::Balance
+        } else {
+            panic!("Unknown AccountDataType {}", bytes[0]);
+        }
+    }
+}
+
+impl BoundedStorable for AccountIdentifierDataType {
+    const MAX_SIZE: u32 = 1;
+    const IS_FIXED_SIZE: bool = true;
 }
 
 /// A helper function to access the scalar state.
@@ -133,14 +182,38 @@ fn with_account_identifier_block_ids<R>(
     ACCOUNTIDENTIFIER_BLOCK_IDS.with(|cell| f(&mut cell.borrow_mut()))
 }
 
-fn with_blocks_and_indices<R>(
-    f: impl FnOnce(&BlockLog, &mut AccountIdentifierBlockIdsMap) -> R,
-) -> R {
-    with_blocks(|blocks| {
-        with_account_identifier_block_ids(|account_identifier_block_ids| {
-            f(blocks, account_identifier_block_ids)
-        })
+/// A helper function to access the account data.
+fn with_account_identifier_data<R>(f: impl FnOnce(&mut AccountIdentifierDataMap) -> R) -> R {
+    ACCOUNTIDENTIFIER_DATA.with(|cell| f(&mut cell.borrow_mut()))
+}
+
+/// A helper function to access the balance of an account.
+fn get_balance(account_identifier: AccountIdentifier) -> u64 {
+    with_account_identifier_data(|account_identifier_data| {
+        account_identifier_data
+            .get(&balance_key(account_identifier))
+            .unwrap_or(0)
     })
+}
+
+/// A helper function to change the balance of an account.
+/// It removes an account balance if the balance is 0.
+fn change_balance(account_identifier: AccountIdentifier, f: impl FnOnce(u64) -> u64) {
+    let key = balance_key(account_identifier);
+    let new_balance = f(get_balance(account_identifier));
+    if new_balance == 0 {
+        with_account_identifier_data(|account_identifier_data| {
+            account_identifier_data.remove(&key)
+        });
+    } else {
+        with_account_identifier_data(|account_identifier_data| {
+            account_identifier_data.insert(key, new_balance)
+        });
+    }
+}
+
+fn balance_key(account_identifier: AccountIdentifier) -> (AccountIdentifierDataType, [u8; 28]) {
+    (AccountIdentifierDataType::Balance, account_identifier.hash)
 }
 
 #[init]
@@ -175,7 +248,7 @@ async fn get_blocks_from_archive(
         length: block_range.length as usize,
     };
     let (blocks_res,): (icp_ledger::GetBlocksResult,) = ic_cdk::call(
-        block_range.callback.canister_id.into(),
+        block_range.callback.canister_id,
         &block_range.callback.method,
         (req,),
     )
@@ -235,6 +308,7 @@ pub async fn build_index() -> Result<(), String> {
     append_blocks(res.blocks);
     let wait_time = compute_wait_time(tx_indexed_count);
     ic_cdk::eprintln!("Indexed: {} waiting : {:?}", tx_indexed_count, wait_time);
+    mutate_state(|mut state| state.last_wait_time = wait_time);
     ScopeGuard::into_inner(failure_guard);
     set_build_index_timer(wait_time);
     Ok(())
@@ -260,30 +334,74 @@ pub fn compute_wait_time(indexed_tx_count: usize) -> Duration {
 }
 
 fn append_blocks(new_blocks: Vec<CandidBlock>) {
-    with_blocks_and_indices(|blocks, account_identifier_block_ids| {
-        // the index of the next block that we
-        // are going to append
-        let mut block_index = blocks.len();
-        for candid_block in new_blocks {
-            let encoded_block = icp_ledger::Block::try_from(candid_block)
-                .unwrap_or_else(|msg| ic_cdk::api::trap(&msg))
-                .encode();
-            blocks
-                .append(&encoded_block.clone().into_vec())
-                .unwrap_or_else(|_| ic_cdk::api::trap("no space left"));
+    // the index of the next block that we
+    // are going to append
+    let mut block_index = with_blocks(|blocks| blocks.len());
+    for candid_block in new_blocks {
+        let block = icp_ledger::Block::try_from(candid_block)
+            .unwrap_or_else(|msg| ic_cdk::api::trap(&msg))
+            .encode();
 
-            // add the block idx to the indices
-            let decoded_block = decode_encoded_block_or_trap(block_index, encoded_block);
-            for account_identifiers in get_account_identifiers(decoded_block) {
+        // append the encoded block to the block log
+        with_blocks(|blocks| {
+            blocks
+                .append(&block.0)
+                .unwrap_or_else(|_| ic_cdk::trap("no space left"))
+        });
+
+        let decoded_block = decode_encoded_block_or_trap(block_index, block);
+
+        // add the block idx to the indices
+        with_account_identifier_block_ids(|account_identifier_block_ids| {
+            for account_identifier in get_account_identifiers(&decoded_block) {
                 account_identifier_block_ids.insert(
-                    account_identifier_block_ids_key(account_identifiers, block_index),
+                    account_identifier_block_ids_key(account_identifier, block_index),
                     (),
                 );
             }
+        });
+        // change the balance of the involved accounts
+        process_balance_changes(block_index, &decoded_block);
 
-            block_index += 1;
+        block_index += 1;
+    }
+}
+
+fn process_balance_changes(block_index: BlockIndex, block: &Block) {
+    match block.transaction.operation {
+        Operation::Burn { from, amount } => debit(block_index, from, amount.get_e8s()),
+        Operation::Mint { to, amount } => credit(block_index, to, amount.get_e8s()),
+        Operation::Transfer {
+            from,
+            to,
+            amount,
+            fee,
+        } => {
+            debit(block_index, from, amount.get_e8s() + fee.get_e8s());
+            credit(block_index, to, amount.get_e8s());
         }
+        _ => ic_cdk::trap("Indexer only supports Burn, Mint and Transfer Operations"),
+    }
+}
+
+fn debit(block_index: BlockIndex, account_identifier: AccountIdentifier, amount: u64) {
+    change_balance(account_identifier, |balance| {
+        if balance < amount {
+            ic_cdk::trap(&format!("Block {} caused an underflow for account_identifier {} when calculating balance {} - amount {}",
+                block_index, account_identifier, balance, amount));
+        }
+        balance - amount
     })
+}
+
+fn credit(block_index: BlockIndex, account_identifier: AccountIdentifier, amount: u64) {
+    change_balance(account_identifier, |balance| {
+        if u64::MAX - balance < amount {
+            ic_cdk::trap(&format!("Block {} caused an overflow for account_identifier {} when calculating balance {} + amount {}",
+                block_index, account_identifier, balance, amount));
+        }
+        balance + amount
+    });
 }
 
 fn decode_encoded_block_or_trap(block_index: BlockIndex, block: EncodedBlock) -> Block {
@@ -295,15 +413,12 @@ fn decode_encoded_block_or_trap(block_index: BlockIndex, block: EncodedBlock) ->
     })
 }
 
-fn get_account_identifiers(block: Block) -> Vec<AccountIdentifier> {
+fn get_account_identifiers(block: &Block) -> Vec<AccountIdentifier> {
     match block.transaction.operation {
         Operation::Burn { from, .. } => vec![from],
         Operation::Mint { to, .. } => vec![to],
         Operation::Transfer { from, to, .. } => vec![from, to],
-        Operation::Approve { from, spender, .. } => vec![from, spender],
-        Operation::TransferFrom {
-            from, to, spender, ..
-        } => vec![from, to, spender],
+        _ => ic_cdk::trap("Indexer only supports Burn, Mint and Transfer Operations"),
     }
 }
 
@@ -355,6 +470,42 @@ fn get_oldest_tx_id(account_identifier: AccountIdentifier) -> Option<BlockIndex>
                     .map(|(key, _)| key.1 .0)
             })
     })
+}
+
+pub fn encode_metrics(w: &mut ic_metrics_encoder::MetricsEncoder<Vec<u8>>) -> std::io::Result<()> {
+    w.encode_gauge(
+        "index_stable_memory_pages",
+        ic_cdk::api::stable::stable_size() as f64,
+        "Size of the stable memory allocated by this canister measured in 64K Wasm pages.",
+    )?;
+    w.encode_gauge(
+        "index_stable_memory_bytes",
+        (ic_cdk::api::stable::stable_size() * 64 * 1024) as f64,
+        "Size of the stable memory allocated by this canister.",
+    )?;
+
+    let cycle_balance = ic_cdk::api::canister_balance128() as f64;
+    w.encode_gauge(
+        "index_cycle_balance",
+        cycle_balance,
+        "Cycle balance on this canister.",
+    )?;
+    w.gauge_vec("cycle_balance", "Cycle balance on this canister.")?
+        .value(&[("canister", "icrc1-index")], cycle_balance)?;
+
+    w.encode_gauge(
+        "index_number_of_blocks",
+        with_blocks(|blocks| blocks.len()) as f64,
+        "Total number of blocks stored in the stable memory.",
+    )?;
+    w.encode_gauge(
+        "index_last_wait_time",
+        with_state(|state| state.last_wait_time)
+            .as_nanos()
+            .min(f64::MAX as u128) as f64,
+        "Last amount of time waited between two transactions fetch.",
+    )?;
+    Ok(())
 }
 
 #[query]
@@ -410,10 +561,74 @@ fn get_account_identifier_transactions(
         transactions.push(transaction_with_idx);
     }
     let oldest_tx_id = get_oldest_tx_id(arg.account_identifier);
+    let balance = get_balance(arg.account_identifier);
     Ok(GetAccountIdentifierTransactionsResponse {
+        balance,
         transactions,
         oldest_tx_id,
     })
 }
 
+#[candid_method(query)]
+#[query]
+fn http_request(req: HttpRequest) -> HttpResponse {
+    if req.path() == "/metrics" {
+        let mut writer =
+            ic_metrics_encoder::MetricsEncoder::new(vec![], ic_cdk::api::time() as i64 / 1_000_000);
+
+        match encode_metrics(&mut writer) {
+            Ok(()) => HttpResponseBuilder::ok()
+                .header("Content-Type", "text/plain; version=0.0.4")
+                .with_body_and_content_length(writer.into_inner())
+                .build(),
+            Err(err) => {
+                HttpResponseBuilder::server_error(format!("Failed to encode metrics: {}", err))
+                    .build()
+            }
+        }
+    } else {
+        HttpResponseBuilder::not_found().build()
+    }
+}
+
+#[query]
+#[candid_method(query)]
+fn get_account_identifier_balance(account_identifier: AccountIdentifier) -> u64 {
+    get_balance(account_identifier)
+}
+
+#[query]
+#[candid_method(query)]
+fn status() -> Status {
+    let num_blocks_synced = with_blocks(|blocks| blocks.len());
+    Status { num_blocks_synced }
+}
+
 fn main() {}
+
+#[test]
+fn test_account_identifier_data_type_storable() {
+    assert_eq!(
+        AccountIdentifierDataType::Balance,
+        AccountIdentifierDataType::from_bytes(AccountIdentifierDataType::Balance.to_bytes())
+    );
+}
+
+#[test]
+fn check_candid_interface_compatibility() {
+    use candid::utils::{service_compatible, CandidSource};
+
+    candid::export_service!();
+
+    let new_interface = __export_service();
+
+    // check the public interface against the actual one
+    let old_interface =
+        std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("index.did");
+
+    service_compatible(
+        CandidSource::Text(&new_interface),
+        CandidSource::File(old_interface.as_path()),
+    )
+    .unwrap();
+}

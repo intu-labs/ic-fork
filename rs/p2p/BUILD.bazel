@@ -9,7 +9,6 @@ package(default_visibility = [
 DEPENDENCIES = [
     "//rs/config",
     "//rs/interfaces",
-    "//rs/interfaces/p2p",
     "//rs/interfaces/registry",
     "//rs/interfaces/transport",
     "//rs/monitoring/logger",
@@ -39,6 +38,7 @@ MACRO_DEPENDENCIES = [
 
 DEV_DEPENDENCIES = [
     "//rs/artifact_manager",
+    "//rs/artifact_pool",
     "//rs/cycles_account_manager",
     "//rs/execution_environment",
     "//rs/https_outcalls/client",
@@ -78,7 +78,7 @@ rust_test(
 )
 
 rust_test_suite_with_extra_srcs(
-    name = "p2p_integration_tests",
+    name = "p2p_integration",
     srcs = glob(["tests/*.rs"]),
     aliases = ALIASES,
     extra_srcs = glob(["tests/framework/*.rs"]),

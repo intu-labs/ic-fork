@@ -2,7 +2,7 @@ use std::cmp::Reverse;
 
 use candid::Principal;
 use certificate_orchestrator_interface::{
-    EncryptedPair, Id, Name, NameError, Registration, State, UpdateType,
+    EncryptedPair, ExportPackage, Id, Name, NameError, Registration, State, UpdateType,
 };
 use ic_cdk::caller;
 use mockall::automock;
@@ -21,7 +21,7 @@ cfg_if::cfg_if! {
 
 use crate::{
     acl::{Authorize, AuthorizeError, WithAuthorize},
-    ic_certification::remove_cert,
+    ic_certification::{add_cert, remove_cert},
     id::Generate,
     LocalRef, StableMap, StorableId, WithMetrics, REGISTRATION_EXPIRATION_TTL,
 };
@@ -244,8 +244,8 @@ impl Update for Updater {
                     },
                 );
 
-                Ok::<(), UpdateError>(())
-            })?,
+                Ok(())
+            }),
 
             // Update state
             UpdateType::State(state) => {
@@ -270,10 +270,70 @@ impl Update for Updater {
                     self.expirations.with(|exps| exps.borrow_mut().remove(id));
                     self.retries.with(|rets| rets.borrow_mut().remove(id));
                 }
+
+                // If a registration is being processed, but its expiration has not been scheduled,
+                // schedule it. This is needed, for example, for certificate renewals
+                if state != State::Available
+                    && !self
+                        .expirations
+                        .with(|exps| exps.borrow().get(id).is_some())
+                {
+                    self.expirations.with(|exps| {
+                        let mut exps = exps.borrow_mut();
+                        exps.push(
+                            id.to_owned(),
+                            Reverse(time() + REGISTRATION_EXPIRATION_TTL.as_nanos() as u64),
+                        );
+                    });
+                }
+
+                Ok(())
             }
         }
+    }
+}
 
-        Ok(())
+pub struct UpdateWithIcCertification<T> {
+    updater: T,
+    pairs: LocalRef<StableMap<StorableId, EncryptedPair>>,
+    registrations: LocalRef<StableMap<StorableId, Registration>>,
+}
+
+impl<T: Update> UpdateWithIcCertification<T> {
+    pub fn new(
+        updater: T,
+        pairs: LocalRef<StableMap<StorableId, EncryptedPair>>,
+        registrations: LocalRef<StableMap<StorableId, Registration>>,
+    ) -> Self {
+        Self {
+            updater,
+            pairs,
+            registrations,
+        }
+    }
+}
+
+impl<T: Update> Update for UpdateWithIcCertification<T> {
+    fn update(&self, id: &Id, typ: UpdateType) -> Result<(), UpdateError> {
+        if let UpdateType::Canister(canister) = typ {
+            // If the encrypted pair has been uploaded, update the entry in certification tree
+            if let Some(pair) = self.pairs.with(|pairs| pairs.borrow().get(&id.into())) {
+                let Registration { name, .. } = self
+                    .registrations
+                    .with(|regs| regs.borrow().get(&id.into()))
+                    .ok_or(UpdateError::NotFound)?;
+
+                let package_to_certify = ExportPackage {
+                    id: id.into(),
+                    name,
+                    canister,
+                    pair,
+                };
+                add_cert(id.into(), &package_to_certify);
+                set_root_hash();
+            }
+        }
+        self.updater.update(id, typ)
     }
 }
 
@@ -450,33 +510,30 @@ impl Expirer {
     }
 }
 
-impl Expire for Expirer {
-    fn expire(&self, t: u64) -> Result<(), ExpireError> {
+impl Expirer {
+    fn get_id(&self, t: u64) -> Option<String> {
         self.expirations.with(|exps| {
             let mut exps = exps.borrow_mut();
-            #[allow(clippy::while_let_loop)]
-            loop {
-                // Check for next expiration
-                let p = match exps.peek() {
-                    Some((_, p)) => p.0,
-                    None => break,
-                };
+            // Check for next expiration
+            let p = exps.peek().map(|(_, p)| p.0)?;
 
-                if p > t {
-                    break;
-                }
-
-                let id = match exps.pop() {
-                    Some((id, _)) => id,
-                    None => break,
-                };
-
-                // Remove registration
-                self.remover.with(|r| r.borrow().remove(&id))?;
+            if p > t {
+                return None;
             }
-            set_root_hash();
-            Ok(())
+
+            exps.pop().map(|(id, _)| id)
         })
+    }
+}
+
+impl Expire for Expirer {
+    fn expire(&self, t: u64) -> Result<(), ExpireError> {
+        while let Some(id) = self.get_id(t) {
+            // Remove registration
+            self.remover.with(|r| r.borrow().remove(&id))?;
+        }
+        set_root_hash();
+        Ok(())
     }
 }
 

@@ -34,9 +34,12 @@ const ONE_DAY_SECONDS: u64 = 24 * 60 * 60;
 // The number of dapp canisters that can be registered with the SNS Root
 const DAPP_CANISTER_REGISTRATION_LIMIT: usize = 100;
 
-impl From<(Option<i32>, String)> for CanisterCallError {
-    fn from((code, description): (Option<i32>, String)) -> Self {
-        Self { code, description }
+impl From<(i32, String)> for CanisterCallError {
+    fn from((code, description): (i32, String)) -> Self {
+        Self {
+            code: Some(code),
+            description,
+        }
     }
 }
 
@@ -570,7 +573,7 @@ impl SnsRootCanister {
                         "Unable to set controller of {dapp_canister_id}: {err:#?}"
                     );
                     let err = Some(CanisterCallError {
-                        code: err.0,
+                        code: Some(err.0),
                         description: err.1,
                     });
                     failed_updates.push(set_dapp_controllers_response::FailedUpdate {
@@ -596,7 +599,7 @@ impl SnsRootCanister {
     }
 
     /// Runs periodic tasks that are not directly triggered by user input.
-    pub async fn run_periodic_tasks(
+    pub async fn heartbeat(
         self_ref: &'static LocalKey<RefCell<Self>>,
         ledger_client: &impl LedgerCanisterClient,
         current_timestamp_seconds: u64,
@@ -731,13 +734,7 @@ async fn get_swap_status(env: &impl Environment, swap_id: PrincipalId) -> Canist
             Encode!(&GetCanisterStatusRequest {}).unwrap(),
         )
         .await
-        .map_err(|(code, msg)| {
-            format!(
-                "Could not get swap status from swap: {}: {}",
-                code.unwrap_or_default(),
-                msg
-            )
-        })
+        .map_err(|(code, msg)| format!("Could not get swap status from swap: {}: {}", code, msg))
         .and_then(|bytes| {
             Decode!(&bytes, CanisterStatusResultV2)
                 .map_err(|e| format!("Could not decode response: {:?}", e))
@@ -858,7 +855,7 @@ mod tests {
             expected_canister: CanisterId,
             expected_method: String,
             expected_bytes: Option<Vec<u8>>,
-            result: Result<Vec<u8>, (Option<i32>, String)>,
+            result: Result<Vec<u8>, (i32, String)>,
         },
     }
 
@@ -879,7 +876,7 @@ mod tests {
             canister_id: CanisterId,
             method_name: &str,
             arg: Vec<u8>,
-        ) -> Result<Vec<u8>, (Option<i32>, String)> {
+        ) -> Result<Vec<u8>, (i32, String)> {
             let mut calls = self.calls.lock().unwrap();
             let result = match calls.pop_front().unwrap() {
                 EnvironmentCall::CallCanister {
@@ -1294,7 +1291,7 @@ mod tests {
 
         let management_canister_client = MockManagementCanisterClient::new(vec![
             MockManagementCanisterClientReply::CanisterStatus(Err((
-                None,
+                0,
                 "You don't control that canister.".to_string(),
             ))),
         ]);
@@ -2420,7 +2417,7 @@ mod tests {
             },
             LedgerCanisterClientCall::Archives {
                 result: Err(CanisterCallError {
-                    code: None,
+                    code: Some(1),
                     description: "This is an error".to_string(),
                 }),
             },
@@ -2440,7 +2437,7 @@ mod tests {
             },
             LedgerCanisterClientCall::Archives {
                 result: Err(CanisterCallError {
-                    code: None,
+                    code: Some(1),
                     description: "This is also an error".to_string(),
                 }),
             },
@@ -2545,7 +2542,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_run_periodic_tasks() {
+    async fn test_heartbeat() {
         // Step 1: Prepare the world.
         thread_local! {
             static SNS_ROOT_CANISTER: RefCell<SnsRootCanister> = RefCell::new(build_test_sns_root_canister(false));
@@ -2584,7 +2581,7 @@ mod tests {
             .as_secs();
 
         // Step 2: Call the code under test.
-        SnsRootCanister::run_periodic_tasks(&SNS_ROOT_CANISTER, &ledger_canister_client, now).await;
+        SnsRootCanister::heartbeat(&SNS_ROOT_CANISTER, &ledger_canister_client, now).await;
 
         // Step 3: Inspect results.
         assert_archive_poll_state_change(
@@ -2595,8 +2592,7 @@ mod tests {
 
         // Running periodic tasks one second in the future should
         // result in no change to state.
-        SnsRootCanister::run_periodic_tasks(&SNS_ROOT_CANISTER, &ledger_canister_client, now + 1)
-            .await;
+        SnsRootCanister::heartbeat(&SNS_ROOT_CANISTER, &ledger_canister_client, now + 1).await;
 
         assert_archive_poll_state_change(
             &SNS_ROOT_CANISTER,
@@ -2606,7 +2602,7 @@ mod tests {
 
         // Running periodic tasks one dat in the future should
         // result in a new poll.
-        SnsRootCanister::run_periodic_tasks(
+        SnsRootCanister::heartbeat(
             &SNS_ROOT_CANISTER,
             &ledger_canister_client,
             now + ONE_DAY_SECONDS,
@@ -2761,7 +2757,7 @@ mod tests {
             };
 
         // Step 2: Call the code under test.
-        SnsRootCanister::run_periodic_tasks(&SNS_ROOT_CANISTER, &ledger_canister_client, now).await;
+        SnsRootCanister::heartbeat(&SNS_ROOT_CANISTER, &ledger_canister_client, now).await;
 
         // We should now have a single Archive canister registered.
         assert_archive_poll_state_change(
@@ -2947,7 +2943,7 @@ mod tests {
                 ]),
             )),
             MockManagementCanisterClientReply::CanisterStatus(Err((
-                Some(0),
+                1,
                 "Error calling status on dapp".to_string(),
             ))),
             MockManagementCanisterClientReply::CanisterStatus(Ok(
@@ -3183,7 +3179,7 @@ mod tests {
                 ]),
             )),
             MockManagementCanisterClientReply::CanisterStatus(Err((
-                Some(0),
+                1,
                 "Error calling status on dapp".to_string(),
             ))),
             MockManagementCanisterClientReply::CanisterStatus(Ok(

@@ -22,29 +22,19 @@ const EXCLUDED: &[&str] = &[
     "(1 == 0)",
     // tECDSA is not enabled in the test yet
     "$0 ~ /tECDSA/",
-    // TODO(CRP-1961): enable the test on limiting the number of delegations to 4
-    "$0 ~ /too many delegations/",
-    // TODO(CRP-1951): the replica does not yet implement all delegation checks
-    "$0 ~ /one delegation, too many targets/",
     // the replica does not yet check that the effective canister id is valid in all cases
     "$0 ~ /wrong effective canister id.in mangement call/",
     "$0 ~ /access denied with different effective canister id/",
-    // TODO(CRP-1951): the replica does not yet implement all delegation checks
-    "$0 ~ /one delegation, too many targets/",
-    "$0 ~ /too many delegations/",
-    "$0 ~ /self-loop in delegations/",
-    "$0 ~ /cycle in delegations/",
     // the replica does not implement proofs of path non-existence
     "$0 ~ /non-existence proofs for non-existing request id/",
     "$0 ~ /module_hash of empty canister/",
-    // In the replica, contexts marked as “deleted” (due to `canister_uninstall` or
-    // running out of cycles) currently still block the transition from stopping to
-    // stopped.
-    "$0 ~ /deleted call contexts do not prevent stopping/",
     "$0 ~ /metadata.absent/",
     // Recursive calls from queries are now allowed.
     // When composite queries are enabled, we should clean up and re-enable this test
     "$0 ~ /Call from query method traps (in query call)/",
+    // TODO(EXC-350): enable these two tests
+    "$0 ~ /invalid_canister_export.wat/",
+    "$0 ~ /invalid_empty_query_name.wat/",
 ];
 
 pub fn config_impl(env: TestEnv) {
@@ -139,6 +129,8 @@ pub fn test_subnet(
     env: TestEnv,
     test_subnet_type: Option<SubnetType>,
     peer_subnet_type: Option<SubnetType>,
+    excluded_tests: Vec<&str>,
+    included_tests: Vec<&str>,
 ) {
     let log = env.logger();
     let topology_snapshot = &env.topology_snapshot();
@@ -155,6 +147,8 @@ pub fn test_subnet(
         .into_os_string()
         .into_string()
         .unwrap();
+    let mut all_excluded_tests = excluded_tests;
+    all_excluded_tests.append(&mut EXCLUDED.to_vec());
     with_endpoint(
         env,
         test_subnet,
@@ -162,7 +156,8 @@ pub fn test_subnet(
         httpbin,
         ic_ref_test_path,
         log,
-        EXCLUDED.to_vec(),
+        all_excluded_tests,
+        included_tests,
     );
 }
 
@@ -197,6 +192,7 @@ pub fn with_endpoint(
     ic_ref_test_path: String,
     log: Logger,
     excluded_tests: Vec<&str>,
+    included_tests: Vec<&str>,
 ) {
     let node = test_subnet.nodes().next().unwrap();
     let test_subnet_config = subnet_config(&test_subnet);
@@ -204,10 +200,13 @@ pub fn with_endpoint(
     info!(log, "test-subnet-config: {}", test_subnet_config);
     info!(log, "peer-subnet-config: {}", peer_subnet_config);
     let status = Command::new(ic_ref_test_path)
-        .env("IC_TEST_DATA", env.get_dependency_path("rs/tests/ic-hs"))
+        .env(
+            "IC_TEST_DATA",
+            env.get_dependency_path("rs/tests/ic-hs/test-data"),
+        )
         .arg("-j20")
         .arg("--pattern")
-        .arg(tests_to_pattern(excluded_tests))
+        .arg(tests_to_pattern(excluded_tests, included_tests))
         .arg("--endpoint")
         .arg(node.get_public_url().to_string())
         .arg("--httpbin")
@@ -224,6 +223,9 @@ pub fn with_endpoint(
     assert!(status.success());
 }
 
-fn tests_to_pattern(tests: Vec<&str>) -> String {
-    format!("!({})", tests.join(" || "))
+fn tests_to_pattern(excluded_tests: Vec<&str>, included_tests: Vec<&str>) -> String {
+    let inner = format!("!({})", excluded_tests.join(" || "));
+    let mut patterns = vec![inner.as_str()];
+    patterns.append(&mut included_tests.clone());
+    patterns.join(" && ")
 }

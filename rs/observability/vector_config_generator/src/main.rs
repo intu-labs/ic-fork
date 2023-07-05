@@ -65,8 +65,9 @@ fn main() -> Result<()> {
     rt.block_on(sync_local_registry(
         log.clone(),
         mercury_dir,
-        cli_args.nns_url,
+        vec![cli_args.nns_url],
         cli_args.skip_sync,
+        None,
     ));
 
     let jobs = map_jobs(&cli_args.jobs_and_ports);
@@ -105,6 +106,7 @@ fn main() -> Result<()> {
         cli_args.poll_interval,
         metrics.clone(),
         Some(update_signal_sender),
+        1,
     );
     let join_handle = std::thread::spawn(loop_fn);
     handles.push(join_handle);
@@ -144,8 +146,11 @@ fn main() -> Result<()> {
 
     rt.block_on(shutdown_signal);
 
-    for handle in handles {
+    for _ in &handles {
         stop_signal_sender.send(())?;
+    }
+
+    for handle in handles {
         handle.join().expect("Join of a handle failed");
     }
     Ok(())

@@ -20,7 +20,7 @@ use crate::{
         test_env_api::{
             get_ssh_session_from_env, retry, AcquirePlaynetCertificate, CreatePlaynetDnsRecords,
             HasDependencies, HasPublicApiUrl, HasTestEnv, HasTopologySnapshot, HasVmName,
-            IcNodeContainer, RetrieveIpv4Addr, SshSession, READY_WAIT_TIMEOUT, RETRY_BACKOFF,
+            IcNodeContainer, RetrieveIpv4Addr, SshSession, RETRY_BACKOFF, SSH_RETRY_TIMEOUT,
         },
         test_setup::GroupSetup,
     },
@@ -40,6 +40,7 @@ use crate::driver::{
     farm::{FileId, PlaynetCertificate},
     test_env_api::HasIcDependencies,
 };
+
 // The following default values are the same as for replica nodes
 const DEFAULT_VCPUS_PER_VM: NrOfVCPUs = NrOfVCPUs::new(6);
 const DEFAULT_MEMORY_KIB_PER_VM: AmountOfMemoryKiB = AmountOfMemoryKiB::new(25165824); // 24GiB
@@ -317,10 +318,8 @@ impl ApiBoundaryNode {
     }
 
     pub fn allocate_vm(self, env: &TestEnv) -> Result<ApiBoundaryNodeWithVm> {
-        let logger = env.logger();
+        let farm = Farm::from_test_env(env, "boundary node");
         let pot_setup = GroupSetup::read_attribute(env);
-        let farm_url = env.get_farm_url()?;
-        let farm = Farm::new(farm_url, logger.clone());
         let api_boundary_node_img_url = env.get_api_boundary_node_img_url()?;
         let api_boundary_node_img_sha256 = env.get_api_boundary_node_img_sha256()?;
 
@@ -611,7 +610,7 @@ impl SshSession for ApiBoundaryNodeSnapshot {
     }
 
     fn block_on_ssh_session(&self) -> Result<Session> {
-        retry(self.env.logger(), READY_WAIT_TIMEOUT, RETRY_BACKOFF, || {
+        retry(self.env.logger(), SSH_RETRY_TIMEOUT, RETRY_BACKOFF, || {
             self.get_ssh_session()
         })
     }

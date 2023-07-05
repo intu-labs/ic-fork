@@ -4,14 +4,14 @@ use crate::ckbtc::lib::install_bitcoin_canister_with_network;
 use crate::driver::ic::InternetComputer;
 use crate::driver::test_env::{SshKeyGen, TestEnv};
 use crate::driver::test_env_api::{
-    retry_async, HasPublicApiUrl, HasTopologySnapshot, IcNodeContainer, NnsInstallationExt,
+    retry_async, HasPublicApiUrl, HasTopologySnapshot, IcNodeContainer, NnsInstallationBuilder,
     READY_WAIT_TIMEOUT, RETRY_BACKOFF,
 };
 use crate::util::{block_on, runtime_from_url};
 use candid::{Decode, Encode};
 use canister_test::Canister;
 use ic_agent::Agent;
-use ic_btc_interface::{Config as BitcoinConfig, Flag, NetworkSnakeCase, SetConfigRequest};
+use ic_btc_interface::{Config as BitcoinConfig, Flag, Network, SetConfigRequest};
 use ic_config::execution_environment::{BITCOIN_MAINNET_CANISTER_ID, BITCOIN_TESTNET_CANISTER_ID};
 use ic_nns_constants::GOVERNANCE_CANISTER_ID;
 use ic_nns_governance::governance::BitcoinNetwork;
@@ -40,15 +40,16 @@ pub fn test(env: TestEnv) {
     let agent = nns_node.build_default_agent();
     let nns = runtime_from_url(nns_node.get_public_url(), nns_node.effective_canister_id());
     info!(logger, "Installing NNS canisters on the root subnet...");
-    nns_node
-        .install_nns_canisters_at_ids(None)
+    NnsInstallationBuilder::new()
+        .at_ids()
+        .install(&nns_node, &env)
         .expect("Could not install NNS canisters");
     info!(&logger, "NNS canisters installed successfully.");
 
     info!(&logger, "Installing the Bitcoin canisters...");
     block_on(async {
-        install_bitcoin_canister_with_network(&nns, &logger, &env, NetworkSnakeCase::Testnet).await;
-        install_bitcoin_canister_with_network(&nns, &logger, &env, NetworkSnakeCase::Mainnet).await;
+        install_bitcoin_canister_with_network(&nns, &logger, &env, Network::Testnet).await;
+        install_bitcoin_canister_with_network(&nns, &logger, &env, Network::Mainnet).await;
     });
     info!(&logger, "Bitcoin canisters installed successfully.");
 

@@ -13,6 +13,7 @@ use crate::{
         ExecutionEnvironmentMetrics, SUBMITTED_OUTCOME_LABEL, SUCCESS_STATUS_LABEL,
     },
     hypervisor::Hypervisor,
+    ic00_permissions::Ic00MethodPermissions,
     NonReplicatedQueryKind,
 };
 use candid::Encode;
@@ -97,7 +98,7 @@ pub enum ExecutionResponse {
 }
 
 /// The data structure returned by
-/// `ExecutionEnvironment.execute_canister_message()`.
+/// `ExecutionEnvironment.execute_canister_input()`.
 #[derive(Debug)]
 pub enum ExecuteMessageResult {
     Finished {
@@ -343,24 +344,6 @@ impl ExecutionEnvironment {
         )
     }
 
-    fn verify_sender_id(req: &Request, state: &ReplicatedState) -> Result<(), UserError> {
-        match state.find_subnet_id(req.sender.into()) {
-            Ok(sender_subnet_id) => {
-                if sender_subnet_id == state.metadata.network_topology.nns_subnet_id
-                    || sender_subnet_id == state.metadata.own_subnet_id
-                {
-                    Ok(())
-                } else {
-                    Err(UserError::new(
-                        ErrorCode::CanisterContractViolation,
-                        format!("Incorrect sender subnet id: {sender_subnet_id}. Sender should be on the same subnet or on the NNS subnet."),
-                    ))
-                }
-            }
-            Err(err) => Err(err),
-        }
-    }
-
     /// Executes a replicated message sent to a subnet.
     /// Returns the new replicated state and the number of left instructions.
     #[allow(clippy::cognitive_complexity)]
@@ -428,8 +411,10 @@ impl ExecutionEnvironment {
         let timestamp_nanos = state.time();
         let method = Ic00Method::from_str(msg.method_name());
         let payload = msg.method_payload();
-        let result = match method {
-            Ok(Ic00Method::InstallCode) => {
+        let method_and_permissions =
+            method.map(|method| (method, Ic00MethodPermissions::new(method)));
+        let result = match method_and_permissions {
+            Ok((Ic00Method::InstallCode, _)) => {
                 // Tail call is needed for deterministic time slicing here to
                 // properly handle the case of a paused execution.
                 return self.execute_install_code(
@@ -443,7 +428,7 @@ impl ExecutionEnvironment {
                 );
             }
 
-            Ok(Ic00Method::SignWithECDSA) => match &msg {
+            Ok((Ic00Method::SignWithECDSA, _)) => match &msg {
                 CanisterCall::Request(request) => {
                     let reject_message = if payload.is_empty() {
                         "An empty message cannot be signed".to_string()
@@ -504,16 +489,13 @@ impl ExecutionEnvironment {
                 }
             },
 
-            Ok(Ic00Method::CreateCanister) => {
+            Ok((Ic00Method::CreateCanister, permissions)) => {
                 match &mut msg {
-                    CanisterCall::Ingress(_) =>
-                        Some((Err(UserError::new(
-                            ErrorCode::CanisterMethodNotFound,
-                            "create_canister can only be called by other canisters, not via ingress messages.")),
-                            Cycles::zero(),
-                        )),
+                    CanisterCall::Ingress(_) => {
+                        self.reject_unexpected_ingress(Ic00Method::CreateCanister)
+                    }
                     CanisterCall::Request(req) => {
-                        match Self::verify_sender_id(req, &state) {
+                        match permissions.verify(req, &state) {
                             Err(err) => Some((Err(err), msg.take_cycles())),
                             Ok(_) => {
                                 let cycles = Arc::make_mut(req).take_cycles();
@@ -523,7 +505,8 @@ impl ExecutionEnvironment {
                                         // Start logging execution time for `create_canister`.
                                         let timer = Timer::start();
 
-                                        let sender_canister_version = args.get_sender_canister_version();
+                                        let sender_canister_version =
+                                            args.get_sender_canister_version();
 
                                         let settings = match args.settings {
                                             None => CanisterSettingsArgs::default(),
@@ -531,8 +514,15 @@ impl ExecutionEnvironment {
                                         };
                                         let result = match CanisterSettings::try_from(settings) {
                                             Err(err) => Some((Err(err.into()), cycles)),
-                                            Ok(settings) =>
-                                                Some(self.create_canister(msg.canister_change_origin(sender_canister_version), cycles, settings, registry_settings.max_number_of_canisters, &mut state, registry_settings.subnet_size, round_limits))
+                                            Ok(settings) => Some(self.create_canister(
+                                                msg.canister_change_origin(sender_canister_version),
+                                                cycles,
+                                                settings,
+                                                registry_settings.max_number_of_canisters,
+                                                &mut state,
+                                                registry_settings.subnet_size,
+                                                round_limits,
+                                            )),
                                         };
                                         info!(
                                             self.log,
@@ -550,7 +540,7 @@ impl ExecutionEnvironment {
                 }
             }
 
-            Ok(Ic00Method::UninstallCode) => {
+            Ok((Ic00Method::UninstallCode, _)) => {
                 let res = match UninstallCodeArgs::decode(payload) {
                     Err(err) => Err(err),
                     Ok(args) => self
@@ -566,7 +556,7 @@ impl ExecutionEnvironment {
                 Some((res, msg.take_cycles()))
             }
 
-            Ok(Ic00Method::UpdateSettings) => {
+            Ok((Ic00Method::UpdateSettings, _)) => {
                 let res = match UpdateSettingsArgs::decode(payload) {
                     Err(err) => Err(err),
                     Ok(args) => {
@@ -627,7 +617,7 @@ impl ExecutionEnvironment {
             }
 
             // This API is deprecated and should not be used in new code.
-            Ok(Ic00Method::SetController) => {
+            Ok((Ic00Method::SetController, _)) => {
                 let res = match SetControllerArgs::decode(payload) {
                     Err(err) => Err(err),
                     Ok(args) => self
@@ -646,7 +636,7 @@ impl ExecutionEnvironment {
                 Some((res, msg.take_cycles()))
             }
 
-            Ok(Ic00Method::CanisterStatus) => {
+            Ok((Ic00Method::CanisterStatus, _)) => {
                 let res = match CanisterIdRecord::decode(payload) {
                     Err(err) => Err(err),
                     Ok(args) => self.get_canister_status(
@@ -659,7 +649,7 @@ impl ExecutionEnvironment {
                 Some((res, msg.take_cycles()))
             }
 
-            Ok(Ic00Method::CanisterInfo) => match &msg {
+            Ok((Ic00Method::CanisterInfo, _)) => match &msg {
                 CanisterCall::Request(_) => {
                     let res = match CanisterInfoRequest::decode(payload) {
                         Err(err) => Err(err),
@@ -676,7 +666,7 @@ impl ExecutionEnvironment {
                 }
             },
 
-            Ok(Ic00Method::StartCanister) => {
+            Ok((Ic00Method::StartCanister, _)) => {
                 let res = match CanisterIdRecord::decode(payload) {
                     Err(err) => Err(err),
                     Ok(args) => {
@@ -686,12 +676,12 @@ impl ExecutionEnvironment {
                 Some((res, msg.take_cycles()))
             }
 
-            Ok(Ic00Method::StopCanister) => match CanisterIdRecord::decode(payload) {
+            Ok((Ic00Method::StopCanister, _)) => match CanisterIdRecord::decode(payload) {
                 Err(err) => Some((Err(err), msg.take_cycles())),
                 Ok(args) => self.stop_canister(args.get_canister_id(), &msg, &mut state),
             },
 
-            Ok(Ic00Method::DeleteCanister) => {
+            Ok((Ic00Method::DeleteCanister, _)) => {
                 let res = match CanisterIdRecord::decode(payload) {
                     Err(err) => Err(err),
                     Ok(args) => {
@@ -717,15 +707,9 @@ impl ExecutionEnvironment {
                 Some((res, msg.take_cycles()))
             }
 
-            Ok(Ic00Method::RawRand) => match &msg {
-                CanisterCall::Ingress(_) => Some((
-                    Err(UserError::new(
-                        ErrorCode::CanisterMethodNotFound,
-                        "raw_rand can only be called by other canisters, not via ingress messages.",
-                    )),
-                    Cycles::zero(),
-                )),
-                CanisterCall::Request(req) => match Self::verify_sender_id(req, &state) {
+            Ok((Ic00Method::RawRand, permissions)) => match &msg {
+                CanisterCall::Ingress(_) => self.reject_unexpected_ingress(Ic00Method::RawRand),
+                CanisterCall::Request(req) => match permissions.verify(req, &state) {
                     Err(err) => Some((Err(err), msg.take_cycles())),
                     Ok(_) => {
                         let res = match EmptyBlob::decode(payload) {
@@ -741,14 +725,15 @@ impl ExecutionEnvironment {
                 },
             },
 
-            Ok(Ic00Method::DepositCycles) => match CanisterIdRecord::decode(payload) {
+            Ok((Ic00Method::DepositCycles, _)) => match CanisterIdRecord::decode(payload) {
                 Err(err) => Some((Err(err), msg.take_cycles())),
                 Ok(args) => Some(self.deposit_cycles(args.get_canister_id(), &mut msg, &mut state)),
             },
-            Ok(Ic00Method::HttpRequest) => match state.metadata.own_subnet_features.http_requests {
-                true => match &msg {
-                    CanisterCall::Request(request) => {
-                        match Self::verify_sender_id(request, &state) {
+            Ok((Ic00Method::HttpRequest, permissions)) => {
+                match state.metadata.own_subnet_features.http_requests {
+                    true => match &msg {
+                        CanisterCall::Request(request) => match permissions.verify(request, &state)
+                        {
                             Err(err) => Some((Err(err), msg.take_cycles())),
                             Ok(_) => match CanisterHttpRequestArgs::decode(payload) {
                                 Err(err) => Some((Err(err), msg.take_cycles())),
@@ -804,25 +789,25 @@ impl ExecutionEnvironment {
                                     }
                                 },
                             },
+                        },
+                        CanisterCall::Ingress(_) => {
+                            self.reject_unexpected_ingress(Ic00Method::HttpRequest)
                         }
+                    },
+                    false => {
+                        let err = Err(UserError::new(
+                            ErrorCode::CanisterContractViolation,
+                            "This API is not enabled on this subnet".to_string(),
+                        ));
+                        Some((err, msg.take_cycles()))
                     }
-                    CanisterCall::Ingress(_) => {
-                        self.reject_unexpected_ingress(Ic00Method::HttpRequest)
-                    }
-                },
-                false => {
-                    let err = Err(UserError::new(
-                        ErrorCode::CanisterContractViolation,
-                        "This API is not enabled on this subnet".to_string(),
-                    ));
-                    Some((err, msg.take_cycles()))
                 }
-            },
-            Ok(Ic00Method::SetupInitialDKG) => match &msg {
-                CanisterCall::Request(request) => match SetupInitialDKGArgs::decode(payload) {
+            }
+            Ok((Ic00Method::SetupInitialDKG, permissions)) => match &msg {
+                CanisterCall::Request(request) => match permissions.verify(request, &state) {
                     Err(err) => Some((Err(err), msg.take_cycles())),
-                    Ok(args) => self
-                        .setup_initial_dkg(*msg.sender(), &args, request, &mut state, rng)
+                    Ok(_) => self
+                        .setup_initial_dkg(payload, request, &mut state, rng)
                         .map_or_else(|err| Some((Err(err), msg.take_cycles())), |()| None),
                 },
                 CanisterCall::Ingress(_) => {
@@ -830,7 +815,7 @@ impl ExecutionEnvironment {
                 }
             },
 
-            Ok(Ic00Method::ECDSAPublicKey) => {
+            Ok((Ic00Method::ECDSAPublicKey, _)) => {
                 let cycles = msg.take_cycles();
                 match &msg {
                     CanisterCall::Request(request) => {
@@ -867,53 +852,38 @@ impl ExecutionEnvironment {
                 }
             }
 
-            Ok(Ic00Method::ComputeInitialEcdsaDealings) => {
+            Ok((Ic00Method::ComputeInitialEcdsaDealings, permissions)) => {
                 let cycles = msg.take_cycles();
                 match &msg {
                     CanisterCall::Request(request) => {
-                        let res = match state.find_subnet_id(*msg.sender()) {
+                        let result = match permissions.verify(request, &state) {
+                            Ok(_) => match ComputeInitialEcdsaDealingsArgs::decode(
+                                request.method_payload(),
+                            ) {
+                                Ok(args) => match get_master_ecdsa_public_key(
+                                    ecdsa_subnet_public_keys,
+                                    self.own_subnet_id,
+                                    &args.key_id,
+                                ) {
+                                    Ok(_) => self
+                                        .compute_initial_ecdsa_dealings(&mut state, args, request)
+                                        .map_or_else(|err: UserError| Some(err), |()| None),
+                                    Err(err) => Some(err),
+                                },
+                                Err(err) => Some(err),
+                            },
                             Err(err) => Some(err),
-                            Ok(sender_subnet_id) => {
-                                if sender_subnet_id != state.metadata.network_topology.nns_subnet_id
-                                {
-                                    Some(UserError::new(
-                                        ErrorCode::CanisterContractViolation,
-                                        format!(
-                                            "{} is called by {}. It can only be called by NNS.",
-                                            Ic00Method::ComputeInitialEcdsaDealings,
-                                            msg.sender(),
-                                        ),
-                                    ))
-                                } else {
-                                    match ComputeInitialEcdsaDealingsArgs::decode(
-                                        request.method_payload(),
-                                    ) {
-                                        Err(err) => Some(err),
-                                        Ok(args) => match get_master_ecdsa_public_key(
-                                            ecdsa_subnet_public_keys,
-                                            self.own_subnet_id,
-                                            &args.key_id,
-                                        ) {
-                                            Err(err) => Some(err),
-                                            Ok(_) => self
-                                                .compute_initial_ecdsa_dealings(
-                                                    &mut state, args, request,
-                                                )
-                                                .map_or_else(Some, |()| None),
-                                        },
-                                    }
-                                }
-                            }
                         };
-                        res.map(|err| (Err(err), cycles))
+                        result.map(|err| (Err(err), cycles))
                     }
+
                     CanisterCall::Ingress(_) => {
                         self.reject_unexpected_ingress(Ic00Method::ComputeInitialEcdsaDealings)
                     }
                 }
             }
 
-            Ok(Ic00Method::ProvisionalCreateCanisterWithCycles) => {
+            Ok((Ic00Method::ProvisionalCreateCanisterWithCycles, _)) => {
                 let res = match ProvisionalCreateCanisterWithCyclesArgs::decode(payload) {
                     Err(err) => Err(err),
                     Ok(args) => {
@@ -941,7 +911,7 @@ impl ExecutionEnvironment {
                 Some((res, msg.take_cycles()))
             }
 
-            Ok(Ic00Method::ProvisionalTopUpCanister) => {
+            Ok((Ic00Method::ProvisionalTopUpCanister, _)) => {
                 let res = match ProvisionalTopUpCanisterArgs::decode(payload) {
                     Err(err) => Err(err),
                     Ok(args) => self.add_cycles(
@@ -955,7 +925,7 @@ impl ExecutionEnvironment {
                 Some((res, msg.take_cycles()))
             }
 
-            Ok(Ic00Method::BitcoinSendTransactionInternal) => match &msg {
+            Ok((Ic00Method::BitcoinSendTransactionInternal, _)) => match &msg {
                 CanisterCall::Request(request) => {
                     match crate::bitcoin::send_transaction_internal(
                         &self.config.bitcoin.privileged_access,
@@ -973,7 +943,7 @@ impl ExecutionEnvironment {
             }
             .map(|payload| (payload, msg.take_cycles())),
 
-            Ok(Ic00Method::BitcoinGetSuccessors) => match &msg {
+            Ok((Ic00Method::BitcoinGetSuccessors, _)) => match &msg {
                 CanisterCall::Request(request) => {
                     match crate::bitcoin::get_successors(
                         &self.config.bitcoin.privileged_access,
@@ -991,10 +961,10 @@ impl ExecutionEnvironment {
             }
             .map(|payload| (payload, msg.take_cycles())),
 
-            Ok(Ic00Method::BitcoinGetBalance)
-            | Ok(Ic00Method::BitcoinGetUtxos)
-            | Ok(Ic00Method::BitcoinSendTransaction)
-            | Ok(Ic00Method::BitcoinGetCurrentFeePercentiles) => {
+            Ok((Ic00Method::BitcoinGetBalance, _))
+            | Ok((Ic00Method::BitcoinGetUtxos, _))
+            | Ok((Ic00Method::BitcoinSendTransaction, _))
+            | Ok((Ic00Method::BitcoinGetCurrentFeePercentiles, _)) => {
                 // Code path can only be triggered if there are no bitcoin canisters to route
                 // the request to.
                 Some((
@@ -1739,48 +1709,38 @@ impl ExecutionEnvironment {
 
     fn setup_initial_dkg(
         &self,
-        sender: PrincipalId,
-        settings: &SetupInitialDKGArgs,
+        payload: &[u8],
         request: &Request,
         state: &mut ReplicatedState,
         rng: &mut dyn RngCore,
     ) -> Result<(), UserError> {
-        let sender_subnet_id = state.find_subnet_id(sender)?;
-
-        if sender_subnet_id != state.metadata.network_topology.nns_subnet_id {
-            return Err(UserError::new(
-                ErrorCode::CanisterContractViolation,
-                format!(
-                    "{} is called by {}. It can only be called by NNS.",
-                    Ic00Method::SetupInitialDKG,
-                    sender,
-                ),
-            ));
-        }
-        match settings.get_set_of_node_ids() {
+        match SetupInitialDKGArgs::decode(payload) {
             Err(err) => Err(err),
-            Ok(nodes_in_target_subnet) => {
-                let mut target_id = [0u8; 32];
-                rng.fill_bytes(&mut target_id);
+            Ok(settings) => match settings.get_set_of_node_ids() {
+                Err(err) => Err(err),
+                Ok(nodes_in_target_subnet) => {
+                    let mut target_id = [0u8; 32];
+                    rng.fill_bytes(&mut target_id);
 
-                info!(
-                    self.log,
-                    "Assigned the target_id {:?} to the new DKG setup request for nodes {:?}",
-                    target_id,
-                    &nodes_in_target_subnet
-                );
-                state
-                    .metadata
-                    .subnet_call_context_manager
-                    .push_setup_initial_dkg_request(SetupInitialDkgContext {
-                        request: request.clone(),
-                        nodes_in_target_subnet,
-                        target_id: NiDkgTargetId::new(target_id),
-                        registry_version: settings.get_registry_version(),
-                        time: state.time(),
-                    });
-                Ok(())
-            }
+                    info!(
+                        self.log,
+                        "Assigned the target_id {:?} to the new DKG setup request for nodes {:?}",
+                        target_id,
+                        &nodes_in_target_subnet
+                    );
+                    state
+                        .metadata
+                        .subnet_call_context_manager
+                        .push_setup_initial_dkg_request(SetupInitialDkgContext {
+                            request: request.clone(),
+                            nodes_in_target_subnet,
+                            target_id: NiDkgTargetId::new(target_id),
+                            registry_version: settings.get_registry_version(),
+                            time: state.time(),
+                        });
+                    Ok(())
+                }
+            },
         }
     }
 

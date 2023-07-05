@@ -19,6 +19,7 @@ use ic_nervous_system_root::{
     },
     LOG_PREFIX,
 };
+use ic_nervous_system_runtime::DfnRuntime;
 use ic_nns_common::{access_control::check_caller_is_governance, types::CallCanisterProposal};
 use ic_nns_constants::{GOVERNANCE_CANISTER_ID, LIFELINE_CANISTER_ID, ROOT_CANISTER_ID};
 use ic_nns_handler_root::{
@@ -32,8 +33,6 @@ use ic_nns_handler_root_interface::{
 
 #[cfg(target_arch = "wasm32")]
 use dfn_core::println;
-
-fn main() {}
 
 // canister_init and canister_post_upgrade are needed here
 // to ensure that printer hook is set up, otherwise error
@@ -70,21 +69,10 @@ fn canister_status() {
 
 #[candid_method(update, rename = "canister_status")]
 async fn canister_status_(canister_id_record: CanisterIdRecord) -> CanisterStatusResult {
-    let client = ManagementCanisterClientImpl::new(Some(&PROXIED_CANISTER_CALLS_TRACKER));
+    let client =
+        ManagementCanisterClientImpl::<DfnRuntime>::new(Some(&PROXIED_CANISTER_CALLS_TRACKER));
     let canister_status_response = client
         .canister_status(canister_id_record)
-        .await
-        .map(CanisterStatusResult::from);
-
-    /*
-    TODO NNS1-2197 - Remove this un-needed call to get the canister_status of NNS Root(this canister)
-      when this call stack does not rely on panics to indicate errors. This call is made to commit the
-      open status call counter to canister memory.
-     */
-    let _unused_canister_status_response =
-        ic_nervous_system_clients::canister_status::canister_status(CanisterIdRecord::from(
-            ROOT_CANISTER_ID,
-        ))
         .await
         .map(CanisterStatusResult::from);
 
@@ -144,7 +132,7 @@ fn change_nns_canister() {
     over(candid, |(proposal,): (ChangeCanisterProposal,)| {
         // Because change_canister is async, and because we can't directly use
         // `await`, we need to use the `spawn` trick.
-        let future = change_canister(proposal);
+        let future = change_canister::<DfnRuntime>(proposal);
 
         // Starts the proposal execution, which will continue after this function has
         // returned.
@@ -209,7 +197,7 @@ async fn change_canister_controllers_(
     canister_management::change_canister_controllers(
         change_canister_controllers_request,
         caller(),
-        &mut ManagementCanisterClientImpl::new(Some(&PROXIED_CANISTER_CALLS_TRACKER)),
+        &mut ManagementCanisterClientImpl::<DfnRuntime>::new(Some(&PROXIED_CANISTER_CALLS_TRACKER)),
     )
     .await
 }
@@ -225,5 +213,90 @@ pub fn serve_http(request: HttpRequest) -> HttpResponse {
     match request.path() {
         "/metrics" => serve_metrics(encode_metrics),
         _ => HttpResponseBuilder::not_found().build(),
+    }
+}
+
+// When run on native this prints the candid service definition of this
+// canister, from the methods annotated with `candid_method` above.
+//
+// Note that `cargo test` calls `main`, and `export_service` (which defines
+// `__export_service` in the current scope) needs to be called exactly once. So
+// in addition to `not(target_arch = "wasm32")` we have a `not(test)` guard here
+// to avoid calling `export_service`, which we need to call in the test below.
+#[cfg(not(any(target_arch = "wasm32", test)))]
+fn main() {
+    // The line below generates did types and service definition from the
+    // methods annotated with `candid_method` above. The definition is then
+    // obtained with `__export_service()`.
+    candid::export_service!();
+    std::print!("{}", __export_service());
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn main() {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use candid::utils::{service_compatible, CandidSource};
+    use lazy_static::lazy_static;
+    use pretty_assertions::assert_eq;
+    use std::{env::var_os, path::PathBuf};
+
+    lazy_static! {
+        static ref DECLARED_INTERFACE: String = {
+            let cargo_manifest_dir =
+                var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR env var undefined");
+
+            let path = PathBuf::from(cargo_manifest_dir).join("canister/root.did");
+
+            let contents = std::fs::read(path).unwrap();
+            String::from_utf8(contents).unwrap()
+        };
+        static ref IMPLEMENTED_INTERFACE: String = {
+            candid::export_service!();
+            __export_service()
+        };
+    }
+
+    /// Makes sure that ./root.did is up to date with the implementation.
+    #[test]
+    fn check_candid_interface_definition_file() {
+        assert_eq!(
+            *DECLARED_INTERFACE, *IMPLEMENTED_INTERFACE,
+            "Generated candid definition does not match canister/root.did. \
+             Run `bazel run :generate_did > canister/root.did` (no nix and/or direnv) in \
+             rs/sns/root to update canister/root.did."
+        );
+    }
+
+    /// This is redundant vs. the previous test. The purpose of this is to show
+    /// what the world would look like if we adopted the recommendation that [we
+    /// use .did files as our source of truth][use-did-file], instead of
+    /// generating them (what we do now).
+    ///
+    ///   [use-did-file]: https://mmapped.blog/posts/01-effective-rust-canisters.html#canister-interfaces
+    #[test]
+    fn test_implementation_conforms_to_declared_interface() {
+        let result = service_compatible(
+            CandidSource::Text(&IMPLEMENTED_INTERFACE),
+            CandidSource::Text(&DECLARED_INTERFACE),
+        );
+
+        if let Err(err) = result {
+            panic!(
+                "Implemented interface:\n\
+                 {}\n\
+                 \n\
+                 Declared interface:\n\
+                 {}\n\
+                 \n\
+                 Error:\n\
+                 {}n\
+                 \n\
+                 The Candid service implementation does not comply with the declared interface.",
+                *IMPLEMENTED_INTERFACE, *DECLARED_INTERFACE, err,
+            );
+        }
     }
 }

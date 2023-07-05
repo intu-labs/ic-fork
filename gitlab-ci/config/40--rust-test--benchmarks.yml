@@ -3,7 +3,6 @@ benchmarks:
     - .bazel-test-all
   rules:
     - if: '$CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE_NAME == "rust-benchmarks"'
-  stage: cargo-test
   needs: []
   artifacts:
     paths:
@@ -12,6 +11,8 @@ benchmarks:
   variables:
     BAZEL_COMMAND: "run"
     RUST_BACKTRACE: "full"
+  tags:
+    - rust-benchmarks
   script:
     - |
       set -eEuo pipefail

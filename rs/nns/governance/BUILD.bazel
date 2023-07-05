@@ -23,9 +23,11 @@ BASE_DEPENDENCIES = [
     "//rs/nns/cmc",
     "//rs/nns/common",
     "//rs/nervous_system/root",
+    "//rs/nervous_system/runtime",
     "//rs/nns/constants",
     "//rs/protobuf",
     "//rs/registry/canister",
+    "//rs/rosetta-api/ledger_core",
     "//rs/rosetta-api/icp_ledger",
     "//rs/rust_canisters/dfn_candid",
     "//rs/rust_canisters/dfn_core",
@@ -38,6 +40,7 @@ BASE_DEPENDENCIES = [
     "@crate_index//:candid",
     "@crate_index//:comparable",
     "@crate_index//:ic-metrics-encoder",
+    "@crate_index//:ic-stable-structures",
     "@crate_index//:itertools",
     "@crate_index//:lazy_static",
     "@crate_index//:maplit",
@@ -113,9 +116,10 @@ cargo_build_script(
 
 rust_library(
     name = "governance",
-    srcs = glob([
-        "src/**/*.rs",
-    ]),
+    srcs = glob(
+        ["src/**/*.rs"],
+        exclude = ["**/*tests.rs"],
+    ),
     aliases = ALIASES,
     crate_name = "ic_nns_governance",
     proc_macro_deps = MACRO_DEPENDENCIES,
@@ -127,9 +131,10 @@ rust_library(
 
 rust_library(
     name = "governance--test_feature",
-    srcs = glob([
-        "src/**/*.rs",
-    ]),
+    srcs = glob(
+        ["src/**/*.rs"],
+        exclude = ["**/*tests.rs"],
+    ),
     aliases = ALIASES,
     crate_features = ["test"],
     crate_name = "ic_nns_governance",
@@ -185,8 +190,8 @@ rust_canister(
     proc_macro_deps = MACRO_DEPENDENCIES,
     service_file = ":canister/governance_test.did",
     deps = DEPENDENCIES_WITH_TEST_FEATURES + [
-        ":governance--test_feature",
         ":build_script",
+        ":governance--test_feature",
     ],
 )
 
@@ -195,12 +200,12 @@ generated_files_check(
     srcs = ["tests/check_generated_files.rs"],
     data = glob(["src/gen/**/*.rs"]) + [
         ":protos",
-        "//rs/types/base_types:protos",
         "//rs/nervous_system/proto:protos",
         "//rs/nns/common:protos",
         "//rs/rosetta-api/icp_ledger:protos",
         "//rs/sns/root:protos",
         "//rs/sns/swap:protos",
+        "//rs/types/base_types:protos",
     ],
     manifest_dir = "rs/nns/governance",
     deps = [
@@ -233,6 +238,7 @@ rust_test(
 
 rust_test(
     name = "governance_test",
+    srcs = glob(["src/**/*.rs"]),
     aliases = ALIASES,
     crate = ":governance",
     proc_macro_deps = MACRO_DEPENDENCIES + MACRO_DEV_DEPENDENCIES,

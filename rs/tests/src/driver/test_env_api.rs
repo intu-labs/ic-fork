@@ -138,6 +138,7 @@ use super::test_setup::GroupSetup;
 use crate::driver::boundary_node::BoundaryNodeVm;
 use crate::driver::constants::{self, kibana_link, SSH_USERNAME};
 use crate::driver::farm::{Farm, GroupSpec};
+use crate::driver::log_events;
 use crate::driver::test_env::{HasIcPrepDir, SshKeyGen, TestEnv, TestEnvAttribute};
 use crate::util::{block_on, create_agent};
 use anyhow::{anyhow, bail, Context, Result};
@@ -174,6 +175,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use slog::{info, warn, Logger};
 use ssh2::Session;
+use std::cmp::max;
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
 use std::fs;
@@ -194,7 +196,8 @@ const REGISTRY_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
 const READY_RESPONSE_TIMEOUT: Duration = Duration::from_secs(6);
 // It usually takes below 60 secs to install nns canisters.
 const NNS_CANISTER_INSTALL_TIMEOUT: Duration = std::time::Duration::from_secs(160);
-
+// Be mindful when modifying this constant, as the event can be consumed by other parties.
+const IC_TOPOLOGY_EVENT_NAME: &str = "ic_topology_created_event";
 pub type NodesInfo = HashMap<NodeId, Option<MaliciousBehaviour>>;
 
 pub fn bail_if_sha256_invalid(sha256: &str, opt_name: &str) -> Result<()> {
@@ -257,10 +260,21 @@ impl std::fmt::Display for TopologySnapshot {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         writeln!(
             f,
-            "\n============================== IC TopologySnapshot, registry version {} ==============================",
+            "\n============================================== IC TopologySnapshot, registry version {} ==============================================",
             self.registry_version
         )
         .unwrap();
+        let max_length_ipv6: usize = max(
+            self.subnets()
+                .flat_map(|s| s.nodes())
+                .map(|n| n.get_ip_addr().to_string().len())
+                .max()
+                .unwrap_or(0),
+            self.unassigned_nodes()
+                .map(|s| s.get_ip_addr().to_string().len())
+                .max()
+                .unwrap_or(0),
+        );
         self.subnets().enumerate().for_each(|(idx, s)| {
             writeln!(
                 f,
@@ -271,15 +285,34 @@ impl std::fmt::Display for TopologySnapshot {
             )
             .unwrap();
             s.nodes().enumerate().for_each(|(idx, n)| {
-                writeln!(f, "\tNode id={}, index={}", n.node_id, idx).unwrap();
+                writeln!(
+                    f,
+                    "\tNode id={}, ipv6={:<width$}, index={}",
+                    n.node_id,
+                    n.get_ip_addr(),
+                    idx,
+                    width = max_length_ipv6,
+                )
+                .unwrap();
             });
         });
+        if self.unassigned_nodes().count() > 0 {
+            writeln!(f, "Unassigned nodes:").unwrap();
+        }
         self.unassigned_nodes().enumerate().for_each(|(idx, n)| {
-            writeln!(f, "Unassigned node id={}, index={}", n.node_id, idx).unwrap()
+            writeln!(
+                f,
+                "\tNode id={}, ipv6={:<width$}, index={}",
+                n.node_id,
+                n.get_ip_addr(),
+                idx,
+                width = max_length_ipv6,
+            )
+            .unwrap()
         });
         writeln!(
             f,
-            "====================================================================================================="
+            "====================================================================================================================================="
         )
         .unwrap();
         Ok(())
@@ -287,6 +320,64 @@ impl std::fmt::Display for TopologySnapshot {
 }
 
 impl TopologySnapshot {
+    pub fn emit_log_event(&self, log: &slog::Logger) {
+        #[derive(Serialize, Deserialize)]
+        pub struct NodeView {
+            pub id: NodeId,
+            pub ipv6: IpAddr,
+        }
+
+        #[derive(Serialize, Deserialize)]
+        pub struct SubnetView {
+            pub subnet_type: SubnetType,
+            pub subnet_id: SubnetId,
+            pub nodes: Vec<NodeView>,
+        }
+
+        #[derive(Serialize, Deserialize)]
+        pub struct TopologyView {
+            pub registry_version: String,
+            pub subnets: Vec<SubnetView>,
+            pub unassigned_nodes: Vec<NodeView>,
+        }
+        let subnets: Vec<_> = self
+            .subnets()
+            .enumerate()
+            .map(|(_, s)| {
+                let nodes: Vec<_> = s
+                    .nodes()
+                    .enumerate()
+                    .map(|(_, n)| NodeView {
+                        id: n.node_id,
+                        ipv6: n.get_ip_addr(),
+                    })
+                    .collect();
+                SubnetView {
+                    subnet_type: s.subnet_type(),
+                    subnet_id: s.subnet_id,
+                    nodes,
+                }
+            })
+            .collect();
+        let unassigned_nodes: Vec<_> = self
+            .unassigned_nodes()
+            .enumerate()
+            .map(|(_, n)| NodeView {
+                id: n.node_id,
+                ipv6: n.get_ip_addr(),
+            })
+            .collect();
+        let event = log_events::LogEvent::new(
+            IC_TOPOLOGY_EVENT_NAME.to_string(),
+            TopologyView {
+                registry_version: self.registry_version.to_string(),
+                subnets,
+                unassigned_nodes,
+            },
+        );
+        event.emit_log(log);
+    }
+
     pub fn subnets(&self) -> Box<dyn Iterator<Item = SubnetSnapshot>> {
         let registry_version = self.local_registry.get_latest_version();
         Box::new(
@@ -571,26 +662,18 @@ impl IcNodeSnapshot {
     }
 
     /// Is it accessible via ssh with the `admin` user.
-    pub fn can_login_as_admin_via_ssh(&self) -> Result<bool> {
-        let sess = self.get_ssh_session()?;
+    /// Waits until connection is ready.
+    pub fn await_can_login_as_admin_via_ssh(&self) -> Result<()> {
+        let sess = self.block_on_ssh_session()?;
         let mut channel = sess.channel_session()?;
         channel.exec("echo ready")?;
         let mut s = String::new();
         channel.read_to_string(&mut s)?;
-        Ok(s.trim() == "ready")
-    }
-
-    /// Waits until the [can_login_as_admin_via_ssh] returns `true`.
-    pub fn await_can_login_as_admin_via_ssh(&self) -> Result<()> {
-        retry(self.env.logger(), READY_WAIT_TIMEOUT, RETRY_BACKOFF, || {
-            self.can_login_as_admin_via_ssh().and_then(|s| {
-                if !s {
-                    bail!("Not ready!")
-                } else {
-                    Ok(())
-                }
-            })
-        })
+        if s.trim() == "ready" {
+            Ok(())
+        } else {
+            bail!("Failed receive from ssh session")
+        }
     }
 
     pub fn subnet_id(&self) -> Option<SubnetId> {
@@ -1339,34 +1422,12 @@ impl HasPublicApiUrl for IcNodeSnapshot {
     }
 }
 
-pub trait NnsInstallationExt {
-    /// Installs the NNS canisters on the subnet this node belongs to. The NNS
-    /// is installed with test neurons enabled which simplify voting on proposals in testing.
-    fn install_nns_canisters(&self) -> Result<()>;
-
-    /// Installs the mainnet NNS canisters on the subnet this node belongs to. The NNS
-    /// is installed with test neurons enabled which simplify voting on proposals in testing.
-    fn install_mainnet_nns_canisters(&self) -> Result<()>;
-
-    /// Installs the qualifying NNS canisters on the subnet this node belongs to. The NNS
-    /// is installed with test neurons enabled which simplify voting on proposals in testing.
-    fn install_qualifying_nns_canisters(&self) -> Result<()>;
-
-    fn install_nns_canisters_with_customizations(
-        &self,
-        canister_wasm_strategy: NnsCanisterWasmStrategy,
-        customizations: NnsCustomizations,
-        installation_timeout: Option<Duration>,
-    ) -> Result<()>;
-
-    fn install_nns_canisters_at_ids(&self, installation_timeout: Option<Duration>) -> Result<()>;
-}
-
 #[derive(Default)]
 pub struct NnsCustomizations {
     /// Summarizes the custom parameters that a newly installed NNS should have.
     pub ledger_balances: Option<HashMap<AccountIdentifier, Tokens>>,
     pub neurons: Option<Vec<Neuron>>,
+    pub install_at_ids: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1376,19 +1437,68 @@ pub enum NnsCanisterWasmStrategy {
     NnsReleaseQualification,
 }
 
-impl<T> NnsInstallationExt for T
-where
-    T: HasIcName + HasPublicApiUrl + Clone + 'static,
-{
-    fn install_nns_canisters_with_customizations(
-        &self,
+pub struct NnsInstallationBuilder {
+    canister_wasm_strategy: NnsCanisterWasmStrategy,
+    customizations: NnsCustomizations,
+    installation_timeout: Duration,
+}
+
+impl Default for NnsInstallationBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl NnsInstallationBuilder {
+    pub fn new() -> Self {
+        Self {
+            canister_wasm_strategy: NnsCanisterWasmStrategy::TakeBuiltFromSources,
+            customizations: NnsCustomizations::default(),
+            installation_timeout: NNS_CANISTER_INSTALL_TIMEOUT,
+        }
+    }
+
+    pub fn use_mainnet_nns_canisters(mut self) -> Self {
+        self.canister_wasm_strategy = NnsCanisterWasmStrategy::TakeLatestMainnetDeployments;
+        self
+    }
+
+    pub fn use_qualifying_nns_canisters(mut self) -> Self {
+        self.canister_wasm_strategy = NnsCanisterWasmStrategy::NnsReleaseQualification;
+        self
+    }
+
+    pub fn use_nns_canisters_from_current_branch(mut self) -> Self {
+        self.canister_wasm_strategy = NnsCanisterWasmStrategy::TakeBuiltFromSources;
+        self
+    }
+
+    pub fn with_overall_timeout(mut self, duration: Duration) -> Self {
+        self.installation_timeout = duration;
+        self
+    }
+
+    pub fn at_ids(mut self) -> Self {
+        self.customizations.install_at_ids = true;
+        self
+    }
+
+    pub fn with_customizations(mut self, customizations: NnsCustomizations) -> Self {
+        self.customizations = customizations;
+        self
+    }
+
+    pub fn with_canister_wasm_strategy(
+        mut self,
         canister_wasm_strategy: NnsCanisterWasmStrategy,
-        customizations: NnsCustomizations,
-        installation_timeout: Option<Duration>,
-    ) -> Result<()> {
-        let test_env = self.test_env();
+    ) -> Self {
+        self.canister_wasm_strategy = canister_wasm_strategy;
+        self
+    }
+
+    pub fn install(&self, node: &IcNodeSnapshot, test_env: &TestEnv) -> Result<()> {
         let log = test_env.logger();
-        match canister_wasm_strategy {
+        match self.canister_wasm_strategy {
             NnsCanisterWasmStrategy::TakeBuiltFromSources => {
                 info!(
                     log,
@@ -1406,86 +1516,36 @@ where
                         "rs/tests/qualifying-nns-canisters/selected-qualifying-nns-canisters.json",
                     )
                     .unwrap();
-                info!(log, "Installing qualification NNS canisters ({qual}) ...");
+                info!(log, "Installing qualification NNS canisters ({}) ...", qual);
                 test_env.set_qualifying_nns_canisters_env_vars()?;
             }
         }
-        let ic_name = self.ic_name();
-        let url = self.get_public_url();
+
+        let ic_name = node.ic_name();
+        let url = node.get_public_url();
         let prep_dir = match test_env.prep_dir(&ic_name) {
             Some(v) => v,
             None => bail!("Prep Dir for IC {:?} does not exist.", ic_name),
         };
         info!(log, "Wait for node reporting healthy status");
-        self.await_status_is_healthy().unwrap();
+        node.await_status_is_healthy().unwrap();
 
+        let install_future = install_nns_canisters(
+            &log,
+            url,
+            &prep_dir,
+            true,
+            self.customizations.install_at_ids,
+            self.customizations.ledger_balances.clone(),
+            self.customizations.neurons.clone(),
+        );
         block_on(async {
-            let timeout = installation_timeout.unwrap_or(NNS_CANISTER_INSTALL_TIMEOUT);
-            let install_future = install_nns_canisters(
-                &log,
-                url,
-                &prep_dir,
-                true,
-                false,
-                customizations.ledger_balances,
-                customizations.neurons,
-            );
-            let timeout_result = tokio::time::timeout(timeout, install_future).await;
+            let timeout_result =
+                tokio::time::timeout(self.installation_timeout, install_future).await;
             if timeout_result.is_err() {
-                println!(
-                    "NNS canisters were not installed within timeout of {} sec",
-                    timeout.as_secs()
-                );
-            }
-        });
-        Ok(())
-    }
-
-    fn install_nns_canisters(&self) -> Result<()> {
-        self.install_nns_canisters_with_customizations(
-            NnsCanisterWasmStrategy::TakeBuiltFromSources,
-            NnsCustomizations::default(),
-            None,
-        )
-    }
-
-    fn install_mainnet_nns_canisters(&self) -> Result<()> {
-        self.install_nns_canisters_with_customizations(
-            NnsCanisterWasmStrategy::TakeLatestMainnetDeployments,
-            NnsCustomizations::default(),
-            None,
-        )
-    }
-
-    fn install_qualifying_nns_canisters(&self) -> Result<()> {
-        self.install_nns_canisters_with_customizations(
-            NnsCanisterWasmStrategy::NnsReleaseQualification,
-            NnsCustomizations::default(),
-            None,
-        )
-    }
-
-    fn install_nns_canisters_at_ids(&self, installation_timeout: Option<Duration>) -> Result<()> {
-        let test_env = self.test_env();
-        test_env.set_nns_canisters_env_vars()?;
-        let log = test_env.logger();
-        let ic_name = self.ic_name();
-        let url = self.get_public_url();
-        let prep_dir = match test_env.prep_dir(&ic_name) {
-            Some(v) => v,
-            None => bail!("Prep Dir for IC {:?} does not exist.", ic_name),
-        };
-        info!(log, "Wait for node reporting healthy status");
-        self.await_status_is_healthy().unwrap();
-        block_on(async {
-            let timeout = installation_timeout.unwrap_or(NNS_CANISTER_INSTALL_TIMEOUT);
-            let install_future =
-                install_nns_canisters(&log, url, &prep_dir, true, true, None, None);
-            let timeout_result = tokio::time::timeout(timeout, install_future).await;
-            if timeout_result.is_err() {
-                println!(
-                    "NNS canisters were not installed within timeout of {} sec",
-                    timeout.as_secs()
+                panic!(
+                    "nns canisters were not installed within timeout of {} sec",
+                    self.installation_timeout.as_secs()
                 );
             }
         });

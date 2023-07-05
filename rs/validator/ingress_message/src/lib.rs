@@ -1,6 +1,6 @@
 //! A standalone crate for validating an [`HttpRequest`] according to the
 //! [Internet Computer Specification](https://internetcomputer.org/docs/current/references/ic-interface-spec#http-interface).
-use ic_types::messages::{HasCanisterId, HttpRequest, HttpRequestContent};
+use ic_types::messages::HttpRequest;
 use ic_types::{CanisterId, UserId};
 use std::fmt::{Display, Formatter};
 
@@ -8,10 +8,6 @@ mod internal;
 
 pub use internal::IngressMessageVerifier;
 pub use internal::TimeProvider;
-
-/// Wrapper trait for the content of an ingress message to be validated.
-pub trait IngressMessageContent: HttpRequestContent + HasCanisterId {}
-impl<T> IngressMessageContent for T where T: HttpRequestContent + HasCanisterId {}
 
 /// Validate an incoming HTTP request according to the
 /// [IC specification](https://internetcomputer.org/docs/current/references/ic-interface-spec#authentication).
@@ -50,7 +46,6 @@ impl<T> IngressMessageContent for T where T: HttpRequestContent + HasCanisterId 
 pub trait HttpRequestVerifier<C> {
     fn validate_request(&self, request: &HttpRequest<C>) -> Result<(), RequestValidationError>;
 }
-
 /// Top-level error that occur when verifying an HTTP request
 /// with [`HttpRequestVerifier::validate_request`].
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

@@ -1775,10 +1775,12 @@ mod tests {
     use ic_consensus_mocks::{dependencies, Dependencies};
     use ic_crypto_test_utils_canister_threshold_sigs::dummy_values::dummy_dealings;
     use ic_crypto_test_utils_canister_threshold_sigs::dummy_values::dummy_initial_idkg_dealing_for_tests;
+    use ic_crypto_test_utils_canister_threshold_sigs::node::Node;
+    use ic_crypto_test_utils_canister_threshold_sigs::node::Nodes;
     use ic_crypto_test_utils_canister_threshold_sigs::{
-        generate_key_transcript, run_idkg_and_create_and_verify_transcript,
-        CanisterThresholdSigTestEnvironment,
+        generate_key_transcript, CanisterThresholdSigTestEnvironment,
     };
+    use ic_crypto_test_utils_reproducible_rng::{reproducible_rng, ReproducibleRng};
     use ic_interfaces_registry::RegistryValue;
     use ic_logger::replica_logger::no_op_logger;
     use ic_protobuf::registry::crypto::v1::EcdsaSigningSubnetList;
@@ -2021,11 +2023,12 @@ mod tests {
 
     #[test]
     fn test_ecdsa_signing_request_order() {
+        let mut rng = reproducible_rng();
         let subnet_id = subnet_test_id(1);
         let num_of_nodes = 4;
-        let env = CanisterThresholdSigTestEnvironment::new(num_of_nodes);
+        let env = CanisterThresholdSigTestEnvironment::new(num_of_nodes, &mut rng);
         let registry_version = env.newest_registry_version;
-        let subnet_nodes = env.receivers().into_iter().collect::<Vec<_>>();
+        let subnet_nodes: Vec<_> = env.nodes.ids();
         let mut valid_keys = BTreeSet::new();
         let key_id = EcdsaKeyId::from_str("Secp256k1:some_key").unwrap();
         valid_keys.insert(key_id.clone());
@@ -2107,7 +2110,7 @@ mod tests {
         );
         */
         let idkg_key_transcript =
-            generate_key_transcript(&env, AlgorithmId::ThresholdEcdsaSecp256k1);
+            generate_key_transcript(&env, AlgorithmId::ThresholdEcdsaSecp256k1, &mut rng);
         let key_transcript_ref =
             ecdsa::UnmaskedTranscript::try_from((Height::from(0), &idkg_key_transcript)).unwrap();
         let key_transcript = ecdsa::UnmaskedTranscriptWithAttributes::new(
@@ -2406,11 +2409,12 @@ mod tests {
 
     #[test]
     fn test_ecdsa_update_next_key_transcript() {
+        let mut rng = reproducible_rng();
         let num_of_nodes = 4;
         let subnet_id = subnet_test_id(1);
-        let env = CanisterThresholdSigTestEnvironment::new(num_of_nodes);
+        let env = CanisterThresholdSigTestEnvironment::new(num_of_nodes, &mut rng);
         let registry_version = env.newest_registry_version;
-        let subnet_nodes = env.receivers().into_iter().collect::<Vec<_>>();
+        let subnet_nodes: Vec<_> = env.nodes.ids();
         let mut block_reader = TestEcdsaBlockReader::new();
         let config_ids = |payload: &ecdsa::EcdsaPayload| {
             let mut arr = payload
@@ -2451,9 +2455,9 @@ mod tests {
                     payload.key_transcript.next_in_creation
                 ),
             };
-            run_idkg_and_create_and_verify_transcript(
+            env.nodes.run_idkg_and_create_and_verify_transcript(
                 &param.as_ref().translate(&block_reader).unwrap(),
-                &env.crypto_components,
+                &mut rng,
             )
         };
         transcript_builder
@@ -2488,9 +2492,9 @@ mod tests {
                     payload.key_transcript.next_in_creation
                 ),
             };
-            run_idkg_and_create_and_verify_transcript(
+            env.nodes.run_idkg_and_create_and_verify_transcript(
                 &param.as_ref().translate(&block_reader).unwrap(),
-                &env.crypto_components,
+                &mut rng,
             )
         };
         transcript_builder.add_transcript(
@@ -2559,9 +2563,9 @@ mod tests {
                     payload.key_transcript.next_in_creation
                 ),
             };
-            run_idkg_and_create_and_verify_transcript(
+            env.nodes.run_idkg_and_create_and_verify_transcript(
                 &param.as_ref().translate(&block_reader).unwrap(),
-                &env.crypto_components,
+                &mut rng,
             )
         };
         transcript_builder.add_transcript(
@@ -2598,12 +2602,16 @@ mod tests {
 
     #[test]
     fn test_ecdsa_update_next_key_transcript_xnet_target_subnet() {
+        let mut rng = reproducible_rng();
         let num_of_nodes = 8;
         let subnet_id = subnet_test_id(1);
-        let env = CanisterThresholdSigTestEnvironment::new(num_of_nodes);
+        let env = CanisterThresholdSigTestEnvironment::new(num_of_nodes, &mut rng);
         let registry_version = env.newest_registry_version;
-        let mut subnet_nodes = env.receivers().into_iter().collect::<Vec<_>>();
-        let target_subnet_nodes = subnet_nodes.split_off(4);
+        let (subnet_nodes, target_subnet_nodes) = env.nodes.partition(|(index, _node)| *index < 4);
+        assert_eq!(subnet_nodes.len(), 4);
+        assert_eq!(subnet_nodes.len(), target_subnet_nodes.len());
+        let (subnet_nodes_ids, target_subnet_nodes_ids): (Vec<_>, Vec<_>) =
+            (subnet_nodes.ids(), target_subnet_nodes.ids());
         let mut block_reader = TestEcdsaBlockReader::new();
         let config_ids = |payload: &ecdsa::EcdsaPayload| {
             let mut arr = payload
@@ -2619,7 +2627,7 @@ mod tests {
         let cur_height = Height::new(10);
         let mut payload = empty_ecdsa_data_payload(subnet_id);
         let result = update_next_key_transcript(
-            &subnet_nodes,
+            &subnet_nodes_ids,
             registry_version,
             None,
             &mut payload.key_transcript.next_in_creation,
@@ -2644,15 +2652,15 @@ mod tests {
                     payload.key_transcript.next_in_creation
                 ),
             };
-            run_idkg_and_create_and_verify_transcript(
+            subnet_nodes.run_idkg_and_create_and_verify_transcript(
                 &param.as_ref().translate(&block_reader).unwrap(),
-                &env.crypto_components,
+                &mut rng,
             )
         };
         transcript_builder
             .add_transcript(masked_transcript.transcript_id, masked_transcript.clone());
         let result = update_next_key_transcript(
-            &subnet_nodes,
+            &subnet_nodes_ids,
             registry_version,
             None,
             &mut payload.key_transcript.next_in_creation,
@@ -2681,9 +2689,9 @@ mod tests {
                     payload.key_transcript.next_in_creation
                 ),
             };
-            run_idkg_and_create_and_verify_transcript(
+            subnet_nodes.run_idkg_and_create_and_verify_transcript(
                 &param.as_ref().translate(&block_reader).unwrap(),
-                &env.crypto_components,
+                &mut rng,
             )
         };
         transcript_builder.add_transcript(
@@ -2691,7 +2699,7 @@ mod tests {
             unmasked_transcript.clone(),
         );
         let result = update_next_key_transcript(
-            &subnet_nodes,
+            &subnet_nodes_ids,
             registry_version,
             None,
             &mut payload.key_transcript.next_in_creation,
@@ -2725,7 +2733,7 @@ mod tests {
         // 4. Reshare the created transcript to a different set of nodes
         let reshare_params = create_reshare_unmasked_transcript_param(
             &unmasked_transcript,
-            &target_subnet_nodes,
+            &target_subnet_nodes_ids,
             registry_version,
         );
         let (params, transcript) =
@@ -2736,11 +2744,11 @@ mod tests {
         );
         payload.key_transcript.next_in_creation =
             ecdsa::KeyTranscriptCreation::XnetReshareOfUnmaskedParams((
-                Box::new(dummy_initial_idkg_dealing_for_tests()),
+                Box::new(dummy_initial_idkg_dealing_for_tests(&mut rng)),
                 params,
             ));
         let result = update_next_key_transcript(
-            &subnet_nodes,
+            &subnet_nodes_ids,
             registry_version,
             None,
             &mut payload.key_transcript.next_in_creation,
@@ -2768,9 +2776,13 @@ mod tests {
                 ),
             };
 
-            run_idkg_and_create_and_verify_transcript(
+            let all_nodes: Nodes = subnet_nodes
+                .into_iter()
+                .chain(target_subnet_nodes.into_iter())
+                .collect();
+            all_nodes.run_idkg_and_create_and_verify_transcript(
                 &param.as_ref().translate(&block_reader).unwrap(),
-                &env.crypto_components,
+                &mut rng,
             )
         };
         transcript_builder.add_transcript(
@@ -2778,7 +2790,7 @@ mod tests {
             unmasked_transcript.clone(),
         );
         let result = update_next_key_transcript(
-            &target_subnet_nodes,
+            &target_subnet_nodes_ids,
             registry_version,
             None,
             &mut payload.key_transcript.next_in_creation,
@@ -2872,11 +2884,12 @@ mod tests {
     /// Test that ECDSA signature agreement is only delivered once.
     #[test]
     fn test_ecdsa_signature_is_only_delivered_once() {
+        let mut rng = reproducible_rng();
         use crate::consensus::batch_delivery::generate_responses_to_sign_with_ecdsa_calls;
 
         let num_nodes = 4;
         let subnet_id = subnet_test_id(0);
-        let env = CanisterThresholdSigTestEnvironment::new(num_nodes);
+        let env = CanisterThresholdSigTestEnvironment::new(num_nodes, &mut rng);
         let mut block_reader = TestEcdsaBlockReader::new();
         let transcript_builder = TestEcdsaTranscriptBuilder::new();
         let mut sign_with_ecdsa_contexts = BTreeMap::new();
@@ -2897,7 +2910,8 @@ mod tests {
         );
         let mut ecdsa_payload = empty_ecdsa_payload(subnet_id);
 
-        let key_transcript = generate_key_transcript(&env, AlgorithmId::ThresholdEcdsaSecp256k1);
+        let key_transcript =
+            generate_key_transcript(&env, AlgorithmId::ThresholdEcdsaSecp256k1, &mut rng);
         let key_transcript_ref =
             ecdsa::UnmaskedTranscript::try_from((Height::from(0), &key_transcript)).unwrap();
         let current_key_transcript = ecdsa::UnmaskedTranscriptWithAttributes::new(
@@ -2908,7 +2922,10 @@ mod tests {
         // Fill in the ongoing signatures
         let sig_inputs_1 = create_sig_inputs_with_args(
             13,
-            &env.receivers(),
+            &env.nodes
+                .receivers(&key_transcript)
+                .map(Node::id)
+                .collect::<BTreeSet<_>>(),
             key_transcript.clone(),
             Height::from(44),
         );
@@ -2999,16 +3016,17 @@ mod tests {
 
     #[test]
     fn test_ecdsa_update_quadruples_in_creation() {
+        let mut rng = reproducible_rng();
         let num_of_nodes = 4;
         let subnet_id = subnet_test_id(1);
-        let env = CanisterThresholdSigTestEnvironment::new(num_of_nodes);
+        let env = CanisterThresholdSigTestEnvironment::new(num_of_nodes, &mut rng);
         let registry_version = env.newest_registry_version;
-        let subnet_nodes = env.receivers().into_iter().collect::<Vec<_>>();
+        let subnet_nodes: Vec<_> = env.nodes.ids();
         let algorithm = AlgorithmId::ThresholdEcdsaSecp256k1;
         let mut block_reader = TestEcdsaBlockReader::new();
         let transcript_builder = TestEcdsaTranscriptBuilder::new();
 
-        let idkg_key_transcript = generate_key_transcript(&env, algorithm);
+        let idkg_key_transcript = generate_key_transcript(&env, algorithm, &mut rng);
         let key_transcript_ref =
             ecdsa::UnmaskedTranscript::try_from((Height::new(100), &idkg_key_transcript)).unwrap();
         let current_key_transcript = ecdsa::UnmaskedTranscriptWithAttributes::new(
@@ -3054,9 +3072,9 @@ mod tests {
         // 1. When kappa_masked is ready, expect a new kappa_unmasked config.
         let kappa_transcript = {
             let param = kappa_config_ref.as_ref();
-            run_idkg_and_create_and_verify_transcript(
+            env.nodes.run_idkg_and_create_and_verify_transcript(
                 &param.translate(&block_reader).unwrap(),
-                &env.crypto_components,
+                &mut rng,
             )
         };
         transcript_builder
@@ -3088,9 +3106,9 @@ mod tests {
         // 2. When lambda_masked is ready, expect a new key_times_lambda config.
         let lambda_transcript = {
             let param = lambda_config_ref.as_ref(); //env.params_for_random_sharing(algorithm);
-            run_idkg_and_create_and_verify_transcript(
+            env.nodes.run_idkg_and_create_and_verify_transcript(
                 &param.translate(&block_reader).unwrap(),
-                &env.crypto_components,
+                &mut rng,
             )
         };
         transcript_builder
@@ -3127,9 +3145,9 @@ mod tests {
                 .find(|x| x.transcript_id == kappa_unmasked_config_id)
                 .unwrap()
                 .clone();
-            run_idkg_and_create_and_verify_transcript(
+            env.nodes.run_idkg_and_create_and_verify_transcript(
                 &param.translate(&block_reader).unwrap(),
-                &env.crypto_components,
+                &mut rng,
             )
         };
         transcript_builder.add_transcript(kappa_unmasked_config_id, kappa_unmasked_transcript);
@@ -3165,9 +3183,9 @@ mod tests {
                 .find(|x| x.transcript_id == kappa_times_lambda_config_id)
                 .unwrap()
                 .clone();
-            run_idkg_and_create_and_verify_transcript(
+            env.nodes.run_idkg_and_create_and_verify_transcript(
                 &param.translate(&block_reader).unwrap(),
-                &env.crypto_components,
+                &mut rng,
             )
         };
         transcript_builder
@@ -3178,9 +3196,9 @@ mod tests {
                 .find(|x| x.transcript_id == key_times_lambda_config_id)
                 .unwrap()
                 .clone();
-            run_idkg_and_create_and_verify_transcript(
+            env.nodes.run_idkg_and_create_and_verify_transcript(
                 &param.translate(&block_reader).unwrap(),
-                &env.crypto_components,
+                &mut rng,
             )
         };
         transcript_builder.add_transcript(key_times_lambda_config_id, key_times_lambda_transcript);
@@ -3204,9 +3222,10 @@ mod tests {
 
     #[test]
     fn test_ecdsa_initiate_reshare_requests() {
+        let mut rng = reproducible_rng();
         let num_of_nodes = 4;
         let subnet_id = subnet_test_id(1);
-        let env = CanisterThresholdSigTestEnvironment::new(num_of_nodes);
+        let env = CanisterThresholdSigTestEnvironment::new(num_of_nodes, &mut rng);
         let mut payload = empty_ecdsa_payload(subnet_id);
         let algorithm = AlgorithmId::ThresholdEcdsaSecp256k1;
         let req_1 = create_reshare_request(1, 1);
@@ -3221,7 +3240,7 @@ mod tests {
         assert!(payload.xnet_reshare_agreements.is_empty());
 
         // Two new requests, should be accepted
-        let key_transcript = generate_key_transcript(&env, algorithm);
+        let key_transcript = generate_key_transcript(&env, algorithm, &mut rng);
         let key_transcript_ref =
             ecdsa::UnmaskedTranscript::try_from((Height::new(100), &key_transcript)).unwrap();
         let current_key_transcript = ecdsa::UnmaskedTranscriptWithAttributes::new(
@@ -3270,9 +3289,10 @@ mod tests {
 
     #[test]
     fn test_ecdsa_update_completed_reshare_requests() {
+        let mut rng = reproducible_rng();
         let num_of_nodes = 4;
         let subnet_id = subnet_test_id(1);
-        let env = CanisterThresholdSigTestEnvironment::new(num_of_nodes);
+        let env = CanisterThresholdSigTestEnvironment::new(num_of_nodes, &mut rng);
         let mut payload = empty_ecdsa_payload(subnet_id);
         let algorithm = AlgorithmId::ThresholdEcdsaSecp256k1;
         let mut block_reader = TestEcdsaBlockReader::new();
@@ -3284,7 +3304,7 @@ mod tests {
 
         reshare_requests.insert(req_1.clone());
         reshare_requests.insert(req_2.clone());
-        let key_transcript = generate_key_transcript(&env, algorithm);
+        let key_transcript = generate_key_transcript(&env, algorithm, &mut rng);
         let key_transcript_ref =
             ecdsa::UnmaskedTranscript::try_from((Height::new(100), &key_transcript)).unwrap();
         let current_key_transcript = ecdsa::UnmaskedTranscriptWithAttributes::new(
@@ -3369,6 +3389,7 @@ mod tests {
 
     #[test]
     fn test_ecdsa_update_summary_refs() {
+        let mut rng = reproducible_rng();
         ic_test_utilities::artifact_pool_config::with_test_pool_config(|pool_config| {
             let Dependencies { mut pool, .. } = dependencies(pool_config, 1);
             let subnet_id = subnet_test_id(1);
@@ -3379,23 +3400,23 @@ mod tests {
                     expected_transcripts.insert(transcript_ref.transcript_id);
                 }
             };
-            let create_key_transcript = || {
-                let env = CanisterThresholdSigTestEnvironment::new(4);
-                generate_key_transcript(&env, AlgorithmId::ThresholdEcdsaSecp256k1)
-            };
+            fn create_key_transcript(rng: &mut ReproducibleRng) -> IDkgTranscript {
+                let env = CanisterThresholdSigTestEnvironment::new(4, rng);
+                generate_key_transcript(&env, AlgorithmId::ThresholdEcdsaSecp256k1, rng)
+            }
 
             // Create a summary block with transcripts
             let summary_height = Height::new(5);
-            let env = CanisterThresholdSigTestEnvironment::new(4);
-            let subnet_nodes = env.receivers().into_iter().collect::<Vec<_>>();
-            let key_transcript = create_key_transcript();
+            let env = CanisterThresholdSigTestEnvironment::new(4, &mut rng);
+            let subnet_nodes: Vec<_> = env.nodes.ids();
+            let key_transcript = create_key_transcript(&mut rng);
             let key_transcript_ref =
                 ecdsa::UnmaskedTranscript::try_from((summary_height, &key_transcript)).unwrap();
             let current_key_transcript = ecdsa::UnmaskedTranscriptWithAttributes::new(
                 key_transcript.to_attributes(),
                 key_transcript_ref,
             );
-            let reshare_key_transcript = create_key_transcript();
+            let reshare_key_transcript = create_key_transcript(&mut rng);
             let reshare_key_transcript_ref =
                 ecdsa::UnmaskedTranscript::try_from((summary_height, &reshare_key_transcript))
                     .unwrap();
@@ -3429,7 +3450,7 @@ mod tests {
             let payload_height_1 = Height::new(10);
             let inputs_1 = create_sig_inputs_with_height(93, payload_height_1);
             let inputs_2 = create_sig_inputs_with_height(94, payload_height_1);
-            let reshare_key_transcript = create_key_transcript();
+            let reshare_key_transcript = create_key_transcript(&mut rng);
             let reshare_key_transcript_ref =
                 ecdsa::UnmaskedTranscript::try_from((payload_height_1, &reshare_key_transcript))
                     .unwrap();
@@ -3504,9 +3525,9 @@ mod tests {
             );
             let kappa_transcript = {
                 let param = kappa_config_ref.as_ref();
-                run_idkg_and_create_and_verify_transcript(
+                env.nodes.run_idkg_and_create_and_verify_transcript(
                     &param.translate(&block_reader).unwrap(),
-                    &env.crypto_components,
+                    &mut rng,
                 )
             };
             transcript_builder.add_transcript(
@@ -3646,26 +3667,27 @@ mod tests {
     #[test]
     fn test_ecdsa_summary_proto_conversion() {
         ic_test_utilities::artifact_pool_config::with_test_pool_config(|pool_config| {
+            let mut rng = reproducible_rng();
             let Dependencies { mut pool, .. } = dependencies(pool_config, 1);
             let subnet_id = subnet_test_id(1);
             let transcript_builder = TestEcdsaTranscriptBuilder::new();
-            let create_key_transcript = || {
-                let env = CanisterThresholdSigTestEnvironment::new(4);
-                generate_key_transcript(&env, AlgorithmId::ThresholdEcdsaSecp256k1)
-            };
+            fn create_key_transcript(rng: &mut ReproducibleRng) -> IDkgTranscript {
+                let env = CanisterThresholdSigTestEnvironment::new(4, rng);
+                generate_key_transcript(&env, AlgorithmId::ThresholdEcdsaSecp256k1, rng)
+            }
 
             // Create a summary block with transcripts
             let summary_height = Height::new(5);
-            let env = CanisterThresholdSigTestEnvironment::new(4);
-            let subnet_nodes = env.receivers().into_iter().collect::<Vec<_>>();
-            let key_transcript = create_key_transcript();
+            let env = CanisterThresholdSigTestEnvironment::new(4, &mut rng);
+            let subnet_nodes: Vec<_> = env.nodes.ids();
+            let key_transcript = create_key_transcript(&mut rng);
             let key_transcript_ref =
                 ecdsa::UnmaskedTranscript::try_from((summary_height, &key_transcript)).unwrap();
             let current_key_transcript = ecdsa::UnmaskedTranscriptWithAttributes::new(
                 key_transcript.to_attributes(),
                 key_transcript_ref,
             );
-            let reshare_key_transcript = create_key_transcript();
+            let reshare_key_transcript = create_key_transcript(&mut rng);
             let reshare_key_transcript_ref =
                 ecdsa::UnmaskedTranscript::try_from((summary_height, &reshare_key_transcript))
                     .unwrap();
@@ -3701,7 +3723,7 @@ mod tests {
             let payload_height_1 = Height::new(10);
             let inputs_1 = create_sig_inputs_with_height(93, payload_height_1);
             let inputs_2 = create_sig_inputs_with_height(94, payload_height_1);
-            let reshare_key_transcript = create_key_transcript();
+            let reshare_key_transcript = create_key_transcript(&mut rng);
             let reshare_key_transcript_ref =
                 ecdsa::UnmaskedTranscript::try_from((payload_height_1, &reshare_key_transcript))
                     .unwrap();
@@ -3771,9 +3793,9 @@ mod tests {
             );
             let kappa_transcript = {
                 let param = kappa_config_ref.as_ref();
-                run_idkg_and_create_and_verify_transcript(
+                env.nodes.run_idkg_and_create_and_verify_transcript(
                     &param.translate(&block_reader).unwrap(),
-                    &env.crypto_components,
+                    &mut rng,
                 )
             };
             transcript_builder.add_transcript(
@@ -4077,6 +4099,7 @@ mod tests {
     #[test]
     fn test_next_in_creation_with_initial_dealings() {
         ic_test_utilities::artifact_pool_config::with_test_pool_config(|pool_config| {
+            let mut rng = reproducible_rng();
             let Dependencies {
                 registry,
                 registry_data_provider,
@@ -4104,7 +4127,7 @@ mod tests {
             };
 
             // Generate initial dealings
-            let initial_dealings = dummy_initial_idkg_dealing_for_tests();
+            let initial_dealings = dummy_initial_idkg_dealing_for_tests(&mut rng);
             let init_tid = initial_dealings.params().transcript_id();
 
             // Step 1: initial bootstrap payload should be created successfully

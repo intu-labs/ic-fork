@@ -1,8 +1,5 @@
 //! The traits in this file define the interface between the `p2p` and `artifact_manager` crates/packages.
-use crate::{
-    artifact_pool::{ArtifactPoolError, ProcessingResult, UnvalidatedArtifact},
-    time_source::TimeSource,
-};
+use crate::{artifact_pool::UnvalidatedArtifact, time_source::TimeSource};
 use derive_more::From;
 use ic_types::artifact::{ArtifactPriorityFn, PriorityFn};
 use ic_types::{artifact, chunkable, p2p, NodeId};
@@ -32,7 +29,6 @@ pub trait AdvertBroadcaster {
 pub enum OnArtifactError {
     NotProcessed,
     AdvertMismatch(AdvertMismatchError),
-    ArtifactPoolError(ArtifactPoolError),
     MessageConversionfailed(p2p::GossipAdvert),
 }
 
@@ -45,19 +41,6 @@ pub struct AdvertMismatchError {
 /// An abstraction of artifact processing for a sub-type of the overall
 /// 'Artifact' type.
 pub trait ArtifactClient<Artifact: artifact::ArtifactKind>: Send + Sync {
-    /// When a new artifact is received, `check_artifact_acceptance` function is
-    /// called to perform basic pre-processing.
-    /// Note that this function should not modify the artifact pool.
-    ///
-    /// If it passes the pre-processing, the same artifact should be
-    /// returned, which will then be passed on to the corresponding
-    /// 'ArtifactProcessor' component afterwards. Otherwise it will be rejected.
-    ///
-    /// The default implementation is to accept unconditionally.
-    fn check_artifact_acceptance(&self, _msg: &Artifact::Message) -> Result<(), ArtifactPoolError> {
-        Ok(())
-    }
-
     /// Checks if the node already has the artifact in the pool by its
     /// identifier.
     fn has_artifact(&self, msg_id: &Artifact::Id) -> bool;
@@ -151,7 +134,7 @@ pub trait ArtifactProcessor<Artifact: artifact::ArtifactKind>: Send {
         &self,
         time_source: &dyn TimeSource,
         new_artifacts: Vec<UnvalidatedArtifact<Artifact::Message>>,
-    ) -> (Vec<artifact::Advert<Artifact>>, ProcessingResult);
+    ) -> (Vec<artifact::Advert<Artifact>>, bool);
 }
 
 /// The Artifact Manager stores artifacts to be used by this and other nodes in

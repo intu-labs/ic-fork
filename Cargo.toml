@@ -63,6 +63,7 @@ members = [
   "rs/crypto/internal/crypto_lib/basic_sig/iccsa/test_utils",
   "rs/crypto/internal/crypto_lib/basic_sig/rsa_pkcs1",
   "rs/crypto/internal/crypto_lib/bls12_381/type",
+  "rs/crypto/internal/crypto_lib/bls12_381/vetkd",
   "rs/crypto/internal/crypto_lib/hmac",
   "rs/crypto/internal/crypto_lib/multi_sig/bls12_381",
   "rs/crypto/internal/crypto_lib/seed",
@@ -127,7 +128,6 @@ members = [
   "rs/interfaces/adapter_client",
   "rs/interfaces/state_manager",
   "rs/interfaces/state_manager/mocks",
-  "rs/interfaces/p2p",
   "rs/interfaces/registry",
   "rs/interfaces/registry/mocks",
   "rs/interfaces/transport",
@@ -136,6 +136,7 @@ members = [
   "rs/messaging",
   "rs/monitoring/adapter_metrics",
   "rs/monitoring/adapter_metrics_service",
+  "rs/monitoring/backtrace",
   "rs/monitoring/context_logger",
   "rs/monitoring/logger",
   "rs/monitoring/metrics",
@@ -155,6 +156,7 @@ members = [
   "rs/nervous_system/proto/protobuf_generator",
   "rs/nervous_system/proxied_canister_calls_tracker",
   "rs/nervous_system/root",
+  "rs/nervous_system/runtime",
   "rs/nns/constants",
   "rs/nns/common",
   "rs/nns/common/protobuf_generator",
@@ -189,6 +191,9 @@ members = [
   "rs/orchestrator/registry_replicator",
   "rs/p2p",
   "rs/p2p/peer_manager",
+  "rs/p2p/memory_transport",
+  "rs/p2p/quic_transport",
+  "rs/p2p/state_sync_manager",
   "rs/p2p/experimental/prototype",
   "rs/replica/setup_ic_network",
   "rs/phantom_newtype",
@@ -370,7 +375,7 @@ pprof = { git = "https://github.com/tikv/pprof-rs", rev = "059d3c80395c74e9f82ca
 
 [workspace.dependencies]
 ic-agent = "0.24.1"
-ic-btc-interface = { git = "https://github.com/dfinity/bitcoin-canister", rev = "e4e89f2caedffbe0cfdec6f9d4a77f66dcb9119e" }
+ic-btc-interface = { git = "https://github.com/dfinity/bitcoin-canister", rev = "b1693619e3d4dbc00d8c79e9b6886e1db48b21f7" }
 ic-utils = "0.24.1"
 k256 = { version = "0.13", default_features = false, features = [
   "arithmetic",

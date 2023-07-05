@@ -1,10 +1,8 @@
 //! The artifact pool public interface that defines the Consensus-P2P API.
 //! Consensus clients must implement the traits in this file in order to use the IC P2P protocol.
 use crate::time_source::TimeSource;
-use derive_more::From;
 use ic_types::{
     artifact::{Advert, ArtifactKind, PriorityFn},
-    replica_version::ReplicaVersion,
     CountBytes, NodeId, Time,
 };
 use serde::{Deserialize, Serialize};
@@ -32,17 +30,6 @@ pub trait ChangeSetProducer<Pool>: Send {
     fn on_state_change(&self, pool: &Pool) -> Self::ChangeSet;
 }
 
-/// The result of a single 'process_changes' call can result in either:
-/// - new changes applied to the state. So 'process_changes' should be
-///   immediately called again.
-/// - no change applied and state was unchanged. So calling 'process_changes' is
-///   not immediately required.
-#[derive(Debug, PartialEq, Eq)]
-pub enum ProcessingResult {
-    StateChanged,
-    StateUnchanged,
-}
-
 /// Ids of validated artifacts that were purged during the pool mutation, and adverts
 /// of artifacts that were validated during the pool mutation. As some changes (i.e.
 /// to the unvalidated section) might not generate adverts or purged IDs, `changed`
@@ -50,7 +37,12 @@ pub enum ProcessingResult {
 pub struct ChangeResult<Artifact: ArtifactKind> {
     pub purged: Vec<Artifact::Id>,
     pub adverts: Vec<Advert<Artifact>>,
-    pub changed: ProcessingResult,
+    /// The result of a single 'apply_changes' call can result in either:
+    /// - new changes applied to the state. So 'on_state_change' + 'apply_changes' should be
+    ///   immediately called again.
+    /// - no change applied and state was unchanged. So calling 'on_state_change' + 'apply_changes' is
+    ///   not immediately required.
+    pub changed: bool,
 }
 
 /// Defines the canonical way for mutating an artifact pool.
@@ -106,27 +98,6 @@ pub trait ValidatedPoolReader<T: ArtifactKind> {
         &self,
         filter: &T::Filter,
     ) -> Box<dyn Iterator<Item = T::Message> + '_>;
-}
-
-/// Contains different errors that can happen on artifact acceptance check.
-/// In our P2P protocol none of the errors from 'ArtifactPoolError' are
-/// handled by the caller. So the enum is used only for tracking different
-/// rejection reasons.
-#[derive(Debug, From)]
-pub enum ArtifactPoolError {
-    /// Message has expired.
-    MessageExpired,
-    /// Message expiry is too far in the future.
-    MessageExpiryTooLong,
-    /// Error when artifact version is not accepted.
-    ArtifactReplicaVersionError(ReplicaVersionMismatch),
-}
-
-/// Describe expected version and artifact version when there is a mismatch.
-#[derive(Debug)]
-pub struct ReplicaVersionMismatch {
-    pub expected: ReplicaVersion,
-    pub artifact: ReplicaVersion,
 }
 
 /// Validated artifact

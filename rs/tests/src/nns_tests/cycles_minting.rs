@@ -1,6 +1,6 @@
 use crate::driver::test_env::{HasIcPrepDir, TestEnv};
 use crate::driver::test_env_api::{
-    HasPublicApiUrl, HasTopologySnapshot, IcNodeContainer, NnsInstallationExt,
+    HasPublicApiUrl, HasTopologySnapshot, IcNodeContainer, NnsInstallationBuilder,
 };
 use crate::nns::{
     change_subnet_type_assignment, change_subnet_type_assignment_with_failure,
@@ -27,6 +27,7 @@ use ic_crypto::threshold_sig_public_key_from_der;
 use ic_crypto_tree_hash::MixedHashTree;
 use ic_ic00_types::{CanisterIdRecord, CanisterStatusResult};
 use ic_ledger_core::block::BlockType;
+use ic_ledger_core::tokens::CheckedAdd;
 use ic_nervous_system_common_test_keys::{
     TEST_NEURON_1_OWNER_KEYPAIR, TEST_USER1_KEYPAIR, TEST_USER1_PRINCIPAL, TEST_USER2_KEYPAIR,
 };
@@ -102,8 +103,8 @@ pub fn test(env: TestEnv) {
     let topology = env.topology_snapshot();
     let nns_node = topology.root_subnet().nodes().next().unwrap();
     let nns = runtime_from_url(nns_node.get_public_url(), nns_node.effective_canister_id());
-    nns_node
-        .install_nns_canisters()
+    NnsInstallationBuilder::new()
+        .install(&nns_node, &env)
         .expect("Could not install NNS canisters");
     let app_node = topology
         .subnets()
@@ -325,7 +326,9 @@ pub fn test(env: TestEnv) {
         /* Create with funds < the refund fee. */
         info!(logger, "creating canister (not enough funds 2)");
 
-        let tiny_amount = (DEFAULT_TRANSFER_FEE + Tokens::from_e8s(10_000)).unwrap();
+        let tiny_amount = DEFAULT_TRANSFER_FEE
+            .checked_add(&Tokens::from_e8s(10_000))
+            .unwrap();
 
         let (err, no_refund_block) = user1
             .create_canister_cmc(tiny_amount, None, &controller_pid, None)
@@ -420,7 +423,11 @@ pub fn test(env: TestEnv) {
         let topup1 = Tokens::new(1000, 0).unwrap();
         let topup2 = Tokens::new(1000, 0).unwrap();
         let topup3 = Tokens::new(3000, 0).unwrap();
-        let top_up_amount = ((topup1 + topup2).unwrap() + topup3).unwrap();
+        let top_up_amount = topup1
+            .checked_add(&topup2)
+            .unwrap()
+            .checked_add(&topup3)
+            .unwrap();
 
         user1
             .top_up_canister_cmc(topup1, None, &new_canister_id)
@@ -515,7 +522,8 @@ pub fn test(env: TestEnv) {
                     * (msg_size + "canister_status".len() + nonce_size),
         );
         let expected_cycles =
-            (icpts_to_cycles.to_cycles((initial_amount + top_up_amount).unwrap()) - fees).get();
+            (icpts_to_cycles.to_cycles(initial_amount.checked_add(&top_up_amount).unwrap()) - fees)
+                .get();
         assert_eq!(new_canister_status.cycles(), expected_cycles);
 
         /* Check that the funds for the canister top up attempt are burned. */
@@ -586,8 +594,10 @@ pub fn test(env: TestEnv) {
                     + config.ingress_byte_reception_fee
                         * (msg_size + "canister_status".len() + nonce_size),
             );
-            let expected_cycles =
-                (icpts_to_cycles.to_cycles((initial_amount + top_up_amount).unwrap()) - fees).get();
+            let expected_cycles = (icpts_to_cycles
+                .to_cycles(initial_amount.checked_add(&top_up_amount).unwrap())
+                - fees)
+                .get();
             assert_eq!(new_canister_status.cycles(), expected_cycles);
 
             /* Check that the funds for the canister top up attempt are burned. */
@@ -803,12 +813,16 @@ pub fn test(env: TestEnv) {
             .await
             .unwrap();
 
-        let total_icpts = (((((small_amount + tiny_amount).unwrap() + initial_amount).unwrap()
-            + top_up_amount)
+        let total_icpts = small_amount
+            .checked_add(&tiny_amount)
             .unwrap()
-            + nns_amount)
+            .checked_add(&initial_amount)
             .unwrap()
-            + nns_amount)
+            .checked_add(&top_up_amount)
+            .unwrap()
+            .checked_add(&nns_amount)
+            .unwrap()
+            .checked_add(&nns_amount)
             .unwrap();
 
         assert_eq!(
@@ -823,8 +837,8 @@ pub fn create_canister_on_specific_subnet_type(env: TestEnv) {
     let topology = env.topology_snapshot();
     let nns_node = topology.root_subnet().nodes().next().unwrap();
     let nns = runtime_from_url(nns_node.get_public_url(), nns_node.effective_canister_id());
-    nns_node
-        .install_nns_canisters()
+    NnsInstallationBuilder::new()
+        .install(&nns_node, &env)
         .expect("Could not install NNS canisters");
     block_on(async move {
         let agent_client = HttpClient::new();
@@ -1035,7 +1049,11 @@ impl TestAgent {
         match txn.operation {
             Operation::Transfer { amount, to, .. } => {
                 assert_eq!(
-                    ((amount + DEFAULT_TRANSFER_FEE).unwrap() + refund_fee).unwrap(),
+                    amount
+                        .checked_add(&DEFAULT_TRANSFER_FEE)
+                        .unwrap()
+                        .checked_add(&refund_fee)
+                        .unwrap(),
                     send_amount
                 );
                 assert_eq!(to, (*TEST_USER1_PRINCIPAL).into());

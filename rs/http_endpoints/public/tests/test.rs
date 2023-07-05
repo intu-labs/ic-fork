@@ -36,9 +36,12 @@ use ic_types::{
     Height, RegistryVersion,
 };
 use prost::Message;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
+use std::{
+    net::TcpStream,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 use tokio::{
     runtime::Runtime,
@@ -302,7 +305,7 @@ fn test_unathorized_call() {
     let mock_consensus_cache = basic_consensus_pool_cache();
     let mock_registry_client = basic_registry_client();
 
-    let (mut ingress_filter, mut ingress_sender, _) = start_http_endpoint(
+    let (mut ingress_filter, _ingress_rx, _) = start_http_endpoint(
         rt.handle().clone(),
         config,
         Arc::new(mock_state_manager),
@@ -319,14 +322,6 @@ fn test_unathorized_call() {
 
     let canister1 = Principal::from_text("223xb-saaaa-aaaaf-arlqa-cai").unwrap();
     let canister2 = Principal::from_text("224lq-3aaaa-aaaaf-ase7a-cai").unwrap();
-
-    // Ingress sender mock that returns empty Ok(()) response.
-    rt.spawn(async move {
-        loop {
-            let (_, resp) = ingress_sender.next_request().await.unwrap();
-            resp.send_response(Ok(()))
-        }
-    });
 
     // Ingress filter mock that returns empty Ok(()) response.
     rt.spawn(async move {
@@ -651,4 +646,105 @@ fn test_status_code_when_ingress_filter_fails() {
     }));
 
     assert_eq!(expected_response, response);
+}
+
+/// This test verifies that the endpoint can be shutdown gracefully by dropping the runtime.
+/// If the shutdown process is not graceful, the test will timeout and fail as dropping the
+/// runtime will block until all tasks (including the endpoint) are completed.
+#[test]
+fn test_graceful_shutdown_of_the_endpoint() {
+    let rt = Runtime::new().unwrap();
+    let addr = get_free_localhost_socket_addr();
+    let config = Config {
+        listen_addr: addr,
+        ..Default::default()
+    };
+
+    let mock_state_manager: ic_interfaces_state_manager_mocks::MockStateManager =
+        basic_state_manager_mock();
+    let mock_consensus_cache = basic_consensus_pool_cache();
+    let mock_registry_client = basic_registry_client();
+
+    let _ = start_http_endpoint(
+        rt.handle().clone(),
+        config,
+        Arc::new(mock_state_manager),
+        Arc::new(mock_consensus_cache),
+        Arc::new(mock_registry_client),
+        Arc::new(Pprof::default()),
+    );
+
+    let agent = Agent::builder()
+        .with_transport(ReqwestHttpReplicaV2Transport::create(format!("http://{}", addr)).unwrap())
+        .build()
+        .unwrap();
+
+    rt.block_on(wait_for_status_healthy(&agent)).unwrap();
+
+    let connection_to_endpoint = TcpStream::connect(addr);
+    assert!(
+        connection_to_endpoint.is_ok(),
+        "Connecting to endpoint failed: {:?}.",
+        connection_to_endpoint
+    );
+
+    // If the shutdown of the endpoint is not "graceful" then the test will timeout
+    // because the thread initiating the shutdown blocks until all spawned work has
+    // been stopped. This is not ideal.
+    // It is unclear if it is possible to set a deadline on the drop operation in order
+    // to fail the test instead of timing out.
+    drop(rt);
+
+    let connection_to_endpoint = TcpStream::connect(addr);
+    assert!(
+        connection_to_endpoint.is_err(),
+        "Connected to endpoint after shutting down the runtime."
+    );
+}
+
+/// If a requested path is too long, the endpoint should return early with 404 (NOT FOUND) status code.
+#[test]
+fn test_too_long_paths_are_rejected() {
+    let rt = Runtime::new().unwrap();
+    let addr = get_free_localhost_socket_addr();
+    let config = Config {
+        listen_addr: addr,
+        ..Default::default()
+    };
+
+    let mock_state_manager = basic_state_manager_mock();
+    let mock_consensus_cache = basic_consensus_pool_cache();
+    let mock_registry_client = basic_registry_client();
+
+    let _ = start_http_endpoint(
+        rt.handle().clone(),
+        config,
+        Arc::new(mock_state_manager),
+        Arc::new(mock_consensus_cache),
+        Arc::new(mock_registry_client),
+        Arc::new(Pprof::default()),
+    );
+
+    let canister = Principal::from_text("223xb-saaaa-aaaaf-arlqa-cai").unwrap();
+
+    let agent = Agent::builder()
+        .with_transport(ReqwestHttpReplicaV2Transport::create(format!("http://{}", addr)).unwrap())
+        .build()
+        .unwrap();
+
+    let long_path: Vec<Label<Vec<u8>>> = (0..100).map(|i| format!("hallo{}", i).into()).collect();
+    let paths = vec![long_path];
+
+    let expected_error_response = AgentError::HttpError(HttpErrorPayload {
+        status: 404,
+        content_type: Some("text/plain".to_string()),
+        content: b"Invalid path requested.".to_vec(),
+    });
+
+    let actual_response = rt.block_on(async {
+        wait_for_status_healthy(&agent).await.unwrap();
+        agent.read_state_raw(paths.clone(), canister).await
+    });
+
+    assert_eq!(Err(expected_error_response), actual_response);
 }

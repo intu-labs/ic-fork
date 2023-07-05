@@ -51,11 +51,9 @@ use ic_sns_init::pb::v1::{
 };
 use ic_sns_swap::{
     pb::v1::{
-        self as swap_pb, error_refund_icp_response, params::NeuronBasketConstructionParameters,
-        set_dapp_controllers_call_result, set_mode_call_result, ErrorRefundIcpRequest,
+        self as swap_pb, error_refund_icp_response, set_mode_call_result, ErrorRefundIcpRequest,
         ErrorRefundIcpResponse, GetOpenTicketResponse, GetStateRequest, GetStateResponse, Init,
-        OpenRequest, RefreshBuyerTokensResponse, SetDappControllersCallResult,
-        SetDappControllersResponse,
+        NeuronBasketConstructionParameters, OpenRequest, RefreshBuyerTokensResponse,
     },
     swap::principal_to_subaccount,
 };
@@ -70,7 +68,7 @@ use ic_sns_test_utils::{
     },
 };
 use ic_sns_wasm::pb::v1::SnsCanisterIds;
-use ic_state_machine_tests::StateMachine;
+use ic_state_machine_tests::{StateMachine, StateMachineBuilder};
 use ic_types::{ingress::WasmResult, Cycles};
 
 use icp_ledger::{
@@ -88,18 +86,13 @@ use std::{
 };
 const ONE_TRILLION: u128 = 1_000_000_000_000;
 const EXPECTED_SNS_CREATION_FEE: u128 = 180 * ONE_TRILLION;
+const SALE_DURATION_SECONDS: u64 = 13 * SECONDS_PER_DAY;
 
 const DEFAULT_MAX_COMMUNITY_FUND_RELATIVE_ERROR: f64 = 0.0;
 use ic_nns_constants::LEDGER_CANISTER_ID;
 
 lazy_static! {
     static ref INITIAL_ICP_BALANCE: ExplosiveTokens = ExplosiveTokens::from_e8s(100 * E8);
-    static ref SWAP_DUE_TIMESTAMP_SECONDS: u64 = StateMachine::new()
-        .time()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-        + 13 * SECONDS_PER_DAY;
     static ref DEFAULT_TRANSFER_FEE: ExplosiveTokens =
         ExplosiveTokens::from(DEFAULT_TRANSFER_FEE_TOKENS);
 }
@@ -499,9 +492,7 @@ fn begin_swap(
                 // neurons.
                 min_participant_icp_e8s: E8 * 5 / 4,
                 max_participant_icp_e8s: INITIAL_ICP_BALANCE.get_e8s(),
-
-                swap_due_timestamp_seconds: *SWAP_DUE_TIMESTAMP_SECONDS,
-
+                swap_due_timestamp_seconds: swap_due_from_now_timestamp_seconds(state_machine),
                 sns_token_e8s,
                 neuron_basket_construction_parameters: Some(NeuronBasketConstructionParameters {
                     count: neuron_basket_count,
@@ -709,7 +700,6 @@ fn craft_community_fund_neuron(maturity_e8s_equivalent: u64) -> nns_governance_p
             controller, /* nonce = */ 0,
         )),
     );
-
     nns_governance_pb::Neuron {
         id: Some(nns_common_pb::NeuronId {
             id: thread_rng().gen(),
@@ -719,6 +709,15 @@ fn craft_community_fund_neuron(maturity_e8s_equivalent: u64) -> nns_governance_p
         maturity_e8s_equivalent,
         ..COMMUNITY_FUND_NEURON_TEMPLATE.clone()
     }
+}
+
+fn swap_due_from_now_timestamp_seconds(state_machine: &StateMachine) -> u64 {
+    state_machine
+        .time()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("Failed timestamp computation")
+        .as_secs()
+        + SALE_DURATION_SECONDS
 }
 
 // Swap should succeed when there are many large Community Fund neurons (i.e. CF
@@ -1239,7 +1238,7 @@ fn do_nothing_special_before_proposal_is_adopted(_state_machine: &mut StateMachi
 fn sns_governance_starts_life_in_pre_initialization_swap_mode_but_transitions_to_normal_mode_after_sale(
 ) {
     // Step 1: Prepare the world.
-    let mut state_machine = StateMachine::new();
+    let mut state_machine = StateMachineBuilder::new().with_current_time().build();
 
     let direct_participant_principal_ids = generate_principal_ids(5);
     let planned_participation_amount_per_account = ExplosiveTokens::from_e8s(70 * E8);
@@ -1516,7 +1515,7 @@ fn assert_successful_swap_finalizes_correctly(
     let neuron_basket_count = 3;
 
     // Step 1: Prepare the world.
-    let mut state_machine = StateMachine::new();
+    let mut state_machine = StateMachineBuilder::new().with_current_time().build();
     let (
         sns_canister_ids,
         community_fund_neurons,
@@ -1697,6 +1696,8 @@ fn assert_successful_swap_finalizes_correctly(
     }
 
     // Execute the swap.
+    // TODO(NNS1-2359): We should also verify the FinalizeSwapResponse from
+    // automatic finalization is correct.
     let finalize_swap_response = {
         let result = state_machine
             .execute_ingress(
@@ -2292,7 +2293,7 @@ fn swap_lifecycle_sad() {
     let neuron_basket_count = 3;
 
     // Step 1: Prepare the world.
-    let mut state_machine = StateMachine::new();
+    let mut state_machine = StateMachineBuilder::new().with_current_time().build();
     let (
         sns_canister_ids,
         community_fund_neurons,
@@ -2393,9 +2394,8 @@ fn swap_lifecycle_sad() {
     // refresh_buyer_tokens is intentionally NOT called here.
 
     // Advance time well into the future so that the swap fails due to no participants.
-    state_machine.set_time(
-        std::time::UNIX_EPOCH + std::time::Duration::from_secs(*SWAP_DUE_TIMESTAMP_SECONDS + 1),
-    );
+    let after_swap_due = swap_due_from_now_timestamp_seconds(&state_machine) + 10;
+    state_machine.set_time(std::time::UNIX_EPOCH + std::time::Duration::from_secs(after_swap_due));
 
     state_machine.tick();
 
@@ -2417,61 +2417,20 @@ fn swap_lifecycle_sad() {
         );
     }
 
-    // Execute the swap.
-    let finalize_swap_response = {
-        let result = state_machine
-            .execute_ingress(
-                sns_canister_ids.swap.unwrap().try_into().unwrap(),
-                "finalize_swap",
-                Encode!(&swap_pb::FinalizeSwapRequest {}).unwrap(),
-            )
-            .unwrap();
-        let result: Vec<u8> = match result {
-            WasmResult::Reply(reply) => reply,
-            WasmResult::Reject(reject) => panic!(
-                "finalize_swap call was rejected by swap canister: {:#?}",
-                reject
-            ),
-        };
-        Decode!(&result, swap_pb::FinalizeSwapResponse).unwrap()
-    };
-
-    // Step 3: Inspect results.
-
-    // Step 3.1: Inspect finalize_swap_response.
+    // Ticking will cause the swap to auto-finalize
+    state_machine.tick();
+    // Make sure that governance is still in PreInitializationSwap mode
     {
-        use swap_pb::settle_community_fund_participation_result::{Possibility, Response};
-        assert_eq!(
-            finalize_swap_response,
-            swap_pb::FinalizeSwapResponse {
-                sweep_icp_result: Some(swap_pb::SweepResult {
-                    success: 1,
-                    failure: 0,
-                    skipped: 0,
-                    invalid: 0,
-                    global_failures: 0,
-                }),
-                sweep_sns_result: None,
-                claim_neuron_result: None,
-                set_mode_call_result: None,
-                set_dapp_controllers_call_result: Some(SetDappControllersCallResult {
-                    possibility: Some(set_dapp_controllers_call_result::Possibility::Ok(
-                        SetDappControllersResponse {
-                            failed_updates: vec![],
-                        }
-                    )),
-                }),
-                settle_community_fund_participation_result: Some(
-                    swap_pb::SettleCommunityFundParticipationResult {
-                        possibility: Some(Possibility::Ok(Response {
-                            governance_error: None,
-                        })),
-                    }
-                ),
-                error_message: None,
-            }
-        );
+        use sns_governance_pb::governance::Mode;
+        let sns_governance_canister_id =
+            CanisterId::try_from(sns_canister_ids.governance.unwrap()).unwrap();
+        let mode = sns_governance_get_mode(&mut state_machine, sns_governance_canister_id)
+            .map(|mode| Mode::from_i32(mode).unwrap())
+            .unwrap();
+        assert_eq!(mode, Mode::PreInitializationSwap);
     }
+
+    // Step 3.1: TODO(NNS1-2359): Verify the FinalizeSwapResponse from automatic finalization is correct.
 
     // Step 3.2.1: Inspect ICP balance(s).
     // TEST_USER2 (the participant) should get their ICP back (less two transfer fees).
@@ -2709,6 +2668,18 @@ fn test_upgrade() {
         neuron_minimum_stake_e8s: Some(1_000_000),
         confirmation_text: None,
         restricted_countries: None,
+        min_participants: None,                      // TODO[NNS1-2339]
+        min_icp_e8s: None,                           // TODO[NNS1-2339]
+        max_icp_e8s: None,                           // TODO[NNS1-2339]
+        min_participant_icp_e8s: None,               // TODO[NNS1-2339]
+        max_participant_icp_e8s: None,               // TODO[NNS1-2339]
+        swap_start_timestamp_seconds: None,          // TODO[NNS1-2339]
+        swap_due_timestamp_seconds: None,            // TODO[NNS1-2339]
+        sns_token_e8s: None,                         // TODO[NNS1-2339]
+        neuron_basket_construction_parameters: None, // TODO[NNS1-2339]
+        nns_proposal_id: None,                       // TODO[NNS1-2339]
+        neurons_fund_participants: None,             // TODO[NNS1-2339]
+        should_auto_finalize: Some(true),
     })
     .unwrap();
     let canister_id = state_machine
@@ -2739,7 +2710,7 @@ fn test_upgrade() {
 #[test]
 fn test_deletion_of_sale_ticket() {
     // Step 1: Prepare the world.
-    let mut state_machine = StateMachine::new();
+    let mut state_machine = StateMachineBuilder::new().with_current_time().build();
 
     let direct_participant_principal_ids = vec![*TEST_USER1_PRINCIPAL];
     let planned_participation_amount_per_account = ExplosiveTokens::from_e8s(70 * E8);
@@ -2969,7 +2940,7 @@ fn test_deletion_of_sale_ticket() {
 #[test]
 fn test_get_sale_parameters() {
     // Step 1: Prepare the world.
-    let mut state_machine = StateMachine::new();
+    let mut state_machine = StateMachineBuilder::new().with_current_time().build();
 
     let direct_participant_principal_ids = vec![*TEST_USER1_PRINCIPAL];
     let planned_participation_amount_per_account = ExplosiveTokens::from_e8s(100 * E8);
@@ -2996,7 +2967,7 @@ fn test_get_sale_parameters() {
 #[test]
 fn test_list_community_fund_participants() {
     // Step 1: Prepare the world.
-    let mut state_machine = StateMachine::new();
+    let mut state_machine = StateMachineBuilder::new().with_current_time().build();
 
     let direct_participant_principal_ids = vec![*TEST_USER1_PRINCIPAL];
     let planned_participation_amount_per_account = ExplosiveTokens::from_e8s(100 * E8);
@@ -3082,6 +3053,7 @@ fn test_last_man_less_than_min() {
             max_transactions_per_response: None
         },
         max_memo_length: None,
+        feature_flags: None,
     }))
     .unwrap();
     state_machine
@@ -3101,6 +3073,18 @@ fn test_last_man_less_than_min() {
         neuron_minimum_stake_e8s: Some(1_000_000),
         confirmation_text: None,
         restricted_countries: None,
+        min_participants: None,                      // TODO[NNS1-2339]
+        min_icp_e8s: None,                           // TODO[NNS1-2339]
+        max_icp_e8s: None,                           // TODO[NNS1-2339]
+        min_participant_icp_e8s: None,               // TODO[NNS1-2339]
+        max_participant_icp_e8s: None,               // TODO[NNS1-2339]
+        swap_start_timestamp_seconds: None,          // TODO[NNS1-2339]
+        swap_due_timestamp_seconds: None,            // TODO[NNS1-2339]
+        sns_token_e8s: None,                         // TODO[NNS1-2339]
+        neuron_basket_construction_parameters: None, // TODO[NNS1-2339]
+        nns_proposal_id: None,                       // TODO[NNS1-2339]
+        neurons_fund_participants: None,             // TODO[NNS1-2339]
+        should_auto_finalize: Some(true),
     })
     .unwrap();
     state_machine
@@ -3120,7 +3104,7 @@ fn test_last_man_less_than_min() {
             max_icp_e8s,
             min_participant_icp_e8s,
             max_participant_icp_e8s,
-            swap_due_timestamp_seconds: *SWAP_DUE_TIMESTAMP_SECONDS,
+            swap_due_timestamp_seconds: swap_due_from_now_timestamp_seconds(&state_machine),
             sns_token_e8s: 10_000_000,
             neuron_basket_construction_parameters: Some(NeuronBasketConstructionParameters {
                 count: 1,
@@ -3193,7 +3177,7 @@ fn test_last_man_less_than_min() {
 #[test]
 fn test_refresh_buyer_token() {
     // Step 1: Prepare the world.
-    let mut state_machine = StateMachine::new();
+    let mut state_machine = StateMachineBuilder::new().with_current_time().build();
 
     let direct_participant_principal_ids = vec![
         *TEST_USER1_PRINCIPAL,

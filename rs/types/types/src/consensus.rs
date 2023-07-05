@@ -31,7 +31,7 @@ pub mod thunk;
 
 pub use catchup::*;
 use hashed::Hashed;
-pub use payload::{BlockPayload, DataPayload, Payload, SummaryPayload};
+pub use payload::{BlockPayload, DataPayload, Payload, PayloadType, SummaryPayload};
 
 /// Abstract messages with height attribute
 pub trait HasHeight {
@@ -223,7 +223,7 @@ pub struct Rank(pub u64);
 /// block chain
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Block {
-    version: ReplicaVersion,
+    pub version: ReplicaVersion,
     /// the parent block that this block extends, forming a block chain
     pub parent: CryptoHashOf<Block>,
     /// the payload of the block
@@ -247,25 +247,6 @@ impl Block {
     ) -> Self {
         Block {
             version: ReplicaVersion::default(),
-            parent,
-            payload,
-            height,
-            rank,
-            context,
-        }
-    }
-
-    /// Create a new block of a particular replica version
-    pub fn new_with_replica_version(
-        version: ReplicaVersion,
-        parent: CryptoHashOf<Block>,
-        payload: Payload,
-        height: Height,
-        rank: Rank,
-        context: ValidationContext,
-    ) -> Self {
-        Block {
-            version,
             parent,
             payload,
             height,
@@ -317,7 +298,7 @@ impl From<&BlockProposal> for pb::BlockProposal {
 impl TryFrom<pb::BlockProposal> for BlockProposal {
     type Error = ProxyDecodeError;
     fn try_from(block_proposal: pb::BlockProposal) -> Result<Self, Self::Error> {
-        let ret = Signed {
+        Ok(Signed {
             content: Hashed {
                 value: Block::try_from(
                     block_proposal
@@ -331,14 +312,7 @@ impl TryFrom<pb::BlockProposal> for BlockProposal {
                 signature: BasicSigOf::from(BasicSig(block_proposal.signature)),
                 signer: node_id_try_from_option(block_proposal.signer)?,
             },
-        };
-        if ret.check_integrity() {
-            Ok(ret)
-        } else {
-            Err(ProxyDecodeError::Other(
-                "Block proposal validity check failed".to_string(),
-            ))
-        }
+        })
     }
 }
 
@@ -357,7 +331,7 @@ impl AsRef<Block> for BlockProposal {
 /// NotarizationContent holds the values that are signed in a notarization
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct NotarizationContent {
-    version: ReplicaVersion,
+    pub version: ReplicaVersion,
     pub height: Height,
     pub block: CryptoHashOf<Block>,
 }
@@ -457,7 +431,7 @@ impl TryFrom<pb::NotarizationShare> for NotarizationShare {
 /// FinalizationContent holds the values that are signed in a finalization
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct FinalizationContent {
-    version: ReplicaVersion,
+    pub version: ReplicaVersion,
     pub height: Height,
     pub block: CryptoHashOf<Block>,
 }
@@ -559,7 +533,7 @@ impl TryFrom<pb::FinalizationShare> for FinalizationShare {
 /// used to create the random beacon.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct RandomBeaconContent {
-    version: ReplicaVersion,
+    pub version: ReplicaVersion,
     pub height: Height,
     pub parent: CryptoHashOf<RandomBeacon>,
 }
@@ -571,21 +545,8 @@ impl RandomBeaconContent {
     /// Create a new RandomBeaconContent with a given height and parent
     /// RandomBeacon
     pub fn new(height: Height, parent: CryptoHashOf<RandomBeacon>) -> Self {
-        RandomBeaconContent {
+        Self {
             version: ReplicaVersion::default(),
-            height,
-            parent,
-        }
-    }
-
-    /// Create a new RandomBeaconContent with a given replica version
-    pub fn new_with_replica_version(
-        version: ReplicaVersion,
-        height: Height,
-        parent: CryptoHashOf<RandomBeacon>,
-    ) -> Self {
-        RandomBeaconContent {
-            version,
             height,
             parent,
         }
@@ -674,7 +635,7 @@ impl TryFrom<pb::RandomBeaconShare> for RandomBeaconShare {
 /// tape.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct RandomTapeContent {
-    version: ReplicaVersion,
+    pub version: ReplicaVersion,
     pub height: Height,
 }
 

@@ -29,7 +29,7 @@ use ic_nns_governance::pb::v1::{
 use ic_nns_test_utils::governance::upgrade_nns_canister_with_args_by_proposal;
 use ic_registry_subnet_type::SubnetType;
 use ic_rosetta_api::convert::to_arg;
-use ic_sns_swap::pb::v1::{params::NeuronBasketConstructionParameters, Params};
+use ic_sns_swap::pb::v1::{NeuronBasketConstructionParameters, Params};
 use ic_types::crypto::{AlgorithmId, UserPublicKey};
 use ic_types::{CanisterId, Cycles, PrincipalId};
 use ic_universal_canister::{
@@ -1585,7 +1585,7 @@ pub(crate) fn create_service_nervous_system_into_params(
             .ok_or("`neuron_basket_construction_parameters` should not be None")?
             .try_into()?;
 
-    let start_time = start_time.ok_or("`start_time` should not be None")?;
+    let start_time = start_time;
     let duration = duration.ok_or("`duration` should not be None")?;
     let (swap_start_timestamp_seconds, swap_due_timestamp_seconds) =
         CreateServiceNervousSystem::swap_start_and_due_timestamps(

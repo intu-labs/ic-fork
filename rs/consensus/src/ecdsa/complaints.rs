@@ -970,7 +970,9 @@ mod tests {
     use super::*;
     use crate::ecdsa::utils::test_utils::*;
     use assert_matches::assert_matches;
+    use ic_consensus_utils::crypto::SignVerify;
     use ic_crypto_test_utils_canister_threshold_sigs::CanisterThresholdSigTestEnvironment;
+    use ic_crypto_test_utils_reproducible_rng::reproducible_rng;
     use ic_interfaces::artifact_pool::{MutablePool, UnvalidatedArtifact};
     use ic_interfaces::time_source::{SysTimeSource, TimeSource};
     use ic_test_utilities::types::ids::{NODE_1, NODE_2, NODE_3, NODE_4};
@@ -1035,15 +1037,13 @@ mod tests {
 
     #[test]
     fn test_crypto_verify_complaint() {
+        let mut rng = reproducible_rng();
         ic_test_utilities::artifact_pool_config::with_test_pool_config(|pool_config| {
             with_test_replica_logger(|logger| {
-                let env = CanisterThresholdSigTestEnvironment::new(1);
-                let crypto = env.crypto_components.into_values().next().unwrap();
-                let (_, complaint_handler) = create_complaint_dependencies_with_crypto(
-                    pool_config,
-                    logger,
-                    Some(Arc::new(crypto)),
-                );
+                let env = CanisterThresholdSigTestEnvironment::new(1, &mut rng);
+                let crypto = env.nodes.iter().next().unwrap().crypto();
+                let (_, complaint_handler) =
+                    create_complaint_dependencies_with_crypto(pool_config, logger, Some(crypto));
                 let id = create_transcript_id_with_height(2, Height::from(20));
                 let transcript = create_transcript(id, &[NODE_2]);
                 let complaint = create_complaint(id, NODE_2, NODE_3);
@@ -1317,15 +1317,13 @@ mod tests {
 
     #[test]
     fn test_crypto_verify_opening() {
+        let mut rng = reproducible_rng();
         ic_test_utilities::artifact_pool_config::with_test_pool_config(|pool_config| {
             with_test_replica_logger(|logger| {
-                let env = CanisterThresholdSigTestEnvironment::new(1);
-                let crypto = env.crypto_components.into_values().next().unwrap();
-                let (_, complaint_handler) = create_complaint_dependencies_with_crypto(
-                    pool_config,
-                    logger,
-                    Some(Arc::new(crypto)),
-                );
+                let env = CanisterThresholdSigTestEnvironment::new(1, &mut rng);
+                let crypto = env.nodes.iter().next().unwrap().crypto();
+                let (_, complaint_handler) =
+                    create_complaint_dependencies_with_crypto(pool_config, logger, Some(crypto));
                 let id = create_transcript_id_with_height(2, Height::from(20));
                 let transcript = create_transcript(id, &[NODE_2]);
                 let complaint = create_complaint(id, NODE_2, NODE_3);
@@ -1756,17 +1754,20 @@ mod tests {
     // Tests loading of a valid transcript without complaints
     #[test]
     fn test_ecdsa_load_transcript_success() {
+        let mut rng = reproducible_rng();
         ic_test_utilities::artifact_pool_config::with_test_pool_config(|pool_config| {
             with_test_replica_logger(|logger| {
-                let env = CanisterThresholdSigTestEnvironment::new(3);
-                let (_, _, idkg_transcript) = create_valid_transcript(&env);
+                let env = CanisterThresholdSigTestEnvironment::new(3, &mut rng);
+                let (_, _, idkg_transcript) = create_valid_transcript(&env, &mut rng);
 
-                let crypto = env.crypto_components.into_values().next().unwrap();
-                let (ecdsa_pool, complaint_handler) = create_complaint_dependencies_with_crypto(
-                    pool_config,
-                    logger,
-                    Some(Arc::new(crypto)),
-                );
+                let crypto = env
+                    .nodes
+                    .receivers(&idkg_transcript)
+                    .next()
+                    .unwrap()
+                    .crypto();
+                let (ecdsa_pool, complaint_handler) =
+                    create_complaint_dependencies_with_crypto(pool_config, logger, Some(crypto));
 
                 let status = complaint_handler.load_transcript(&ecdsa_pool, &idkg_transcript);
                 assert_matches!(status, TranscriptLoadStatus::Success);
@@ -1777,18 +1778,16 @@ mod tests {
     // Tests that loading of an invalid transcript fails
     #[test]
     fn test_ecdsa_load_transcript_failure_invalid_transcript() {
+        let mut rng = reproducible_rng();
         ic_test_utilities::artifact_pool_config::with_test_pool_config(|pool_config| {
             with_test_replica_logger(|logger| {
-                let env = CanisterThresholdSigTestEnvironment::new(3);
-                let receivers = env.receivers().into_iter().collect::<Vec<_>>();
+                let env = CanisterThresholdSigTestEnvironment::new(3, &mut rng);
+                let receivers: Vec<_> = env.nodes.ids();
                 let t = create_transcript(create_transcript_id(1), &receivers[..]);
 
-                let crypto = env.crypto_components.into_values().next().unwrap();
-                let (ecdsa_pool, complaint_handler) = create_complaint_dependencies_with_crypto(
-                    pool_config,
-                    logger,
-                    Some(Arc::new(crypto)),
-                );
+                let crypto = env.nodes.iter().next().unwrap().crypto();
+                let (ecdsa_pool, complaint_handler) =
+                    create_complaint_dependencies_with_crypto(pool_config, logger, Some(crypto));
 
                 let status = complaint_handler.load_transcript(&ecdsa_pool, &t);
                 assert_matches!(status, TranscriptLoadStatus::Failure);
@@ -1799,17 +1798,15 @@ mod tests {
     // Tests that crypto failure when creating complaint leads to transcript load failure
     #[test]
     fn test_ecdsa_load_transcript_failure_to_create_complaint() {
+        let mut rng = reproducible_rng();
         ic_test_utilities::artifact_pool_config::with_test_pool_config(|pool_config| {
             with_test_replica_logger(|logger| {
-                let env = CanisterThresholdSigTestEnvironment::new(3);
-                let (_, _, transcript) = create_corrupted_transcript(&env);
+                let env = CanisterThresholdSigTestEnvironment::new(3, &mut rng);
+                let (_, _, transcript) = create_corrupted_transcript(&env, &mut rng);
 
-                let crypto = env.crypto_components.into_values().next().unwrap();
-                let (ecdsa_pool, complaint_handler) = create_complaint_dependencies_with_crypto(
-                    pool_config,
-                    logger,
-                    Some(Arc::new(crypto)),
-                );
+                let crypto = env.nodes.receivers(&transcript).next().unwrap().crypto();
+                let (ecdsa_pool, complaint_handler) =
+                    create_complaint_dependencies_with_crypto(pool_config, logger, Some(crypto));
 
                 // Will attempt to create a complaint but fail since node ID of crypto and
                 // complaint_handler are different
@@ -1823,21 +1820,21 @@ mod tests {
     // loading succeeds after openings are generated.
     #[test]
     fn test_ecdsa_load_transcripts_with_complaints_and_openings() {
+        let mut rng = reproducible_rng();
         ic_test_utilities::artifact_pool_config::with_test_pool_config(|pool_config| {
             with_test_replica_logger(|logger| {
-                let env = CanisterThresholdSigTestEnvironment::new(3);
-                let (complainer, _, t) = create_corrupted_transcript(&env);
+                let env = CanisterThresholdSigTestEnvironment::new(3, &mut rng);
+                let (complainer, _, t) = create_corrupted_transcript(&env, &mut rng);
 
-                let mut components = env.crypto_components.into_iter();
-                let complainer_crypto = components.next().unwrap().1;
-                let remaining_crypto: Vec<(_, Arc<dyn ConsensusCrypto>)> = components
-                    .map(|(id, c)| (id, Arc::new(c) as Arc<_>))
-                    .collect();
+                let mut components = env.nodes.receivers(&t);
+
+                let complainer_crypto = components.next().unwrap().crypto();
+                let remaining_nodes: Vec<_> = components.collect();
                 let (mut ecdsa_pool, complaint_handler) =
                     create_complaint_dependencies_with_crypto_and_node_id(
                         pool_config,
                         logger,
-                        Some(Arc::new(complainer_crypto)),
+                        Some(complainer_crypto),
                         complainer,
                     );
 
@@ -1860,13 +1857,15 @@ mod tests {
                 let status = complaint_handler.load_transcript(&ecdsa_pool, &t);
                 assert_matches!(status, TranscriptLoadStatus::Failure);
 
-                for (node_id, crypto) in remaining_crypto {
-                    let idkg_opening = crypto
+                for node in remaining_nodes {
+                    let idkg_opening = node
+                        .crypto()
                         .open_transcript(&t, complainer, &complaint.content.idkg_complaint)
                         .expect("Failed to open transcript with complaint");
                     let content = EcdsaOpeningContent { idkg_opening };
-                    let signature = crypto
-                        .sign(&content, node_id, t.registry_version)
+                    let signature = node
+                        .crypto()
+                        .sign(&content, node.id(), t.registry_version)
                         .expect("Failed to sign opening content");
                     let opening = EcdsaOpening { content, signature };
                     ecdsa_pool.apply_changes(

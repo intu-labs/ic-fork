@@ -1,5 +1,8 @@
 pub mod cdk_runtime;
 
+#[cfg(test)]
+mod tests;
+
 use crate::cdk_runtime::CdkRuntime;
 use candid::{
     types::number::{Int, Nat},
@@ -112,6 +115,7 @@ pub struct InitArgs {
     pub metadata: Vec<(String, Value)>,
     pub archive_options: ArchiveOptions,
     pub max_memo_length: Option<u16>,
+    pub feature_flags: Option<FeatureFlags>,
 }
 
 #[derive(Deserialize, CandidType, Clone, Debug, PartialEq, Eq)]
@@ -143,6 +147,8 @@ pub struct UpgradeArgs {
     pub change_fee_collector: Option<ChangeFeeCollector>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_memo_length: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature_flags: Option<FeatureFlags>,
 }
 
 #[derive(Deserialize, CandidType, Clone, Debug, PartialEq, Eq)]
@@ -154,6 +160,8 @@ pub enum LedgerArgument {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Ledger {
     balances: LedgerBalances,
+    #[serde(default)]
+    approvals: AllowanceTable<ApprovalKey, Account, Tokens>,
     blockchain: Blockchain<CdkRuntime, Icrc1ArchiveWasm>,
 
     minting_account: Account,
@@ -168,6 +176,26 @@ pub struct Ledger {
     metadata: Vec<(String, StoredValue)>,
     #[serde(default = "default_max_memo_length")]
     max_memo_length: u16,
+
+    #[serde(default)]
+    feature_flags: FeatureFlags,
+}
+
+#[derive(CandidType, Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub struct FeatureFlags {
+    pub icrc2: bool,
+}
+
+impl FeatureFlags {
+    const fn const_default() -> Self {
+        Self { icrc2: false }
+    }
+}
+
+impl Default for FeatureFlags {
+    fn default() -> Self {
+        Self::const_default()
+    }
 }
 
 fn default_max_memo_length() -> u16 {
@@ -186,11 +214,13 @@ impl Ledger {
             archive_options,
             fee_collector_account,
             max_memo_length,
+            feature_flags,
         }: InitArgs,
         now: TimeStamp,
     ) -> Self {
         let mut ledger = Self {
             balances: LedgerBalances::default(),
+            approvals: Default::default(),
             blockchain: Blockchain::new_with_archive(archive_options),
             transactions_by_hash: BTreeMap::new(),
             transactions_by_height: VecDeque::new(),
@@ -204,6 +234,7 @@ impl Ledger {
                 .map(|(k, v)| (k, StoredValue::from(v)))
                 .collect(),
             max_memo_length: max_memo_length.unwrap_or(DEFAULT_MAX_MEMO_LENGTH),
+            feature_flags: feature_flags.unwrap_or_default(),
         };
 
         for (account, balance) in initial_balances.into_iter() {
@@ -222,7 +253,7 @@ impl Ledger {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Serialize, Deserialize)]
 pub struct ApprovalKey(Account, Account);
 
 impl From<(&Account, &Account)> for ApprovalKey {
@@ -233,8 +264,9 @@ impl From<(&Account, &Account)> for ApprovalKey {
 
 impl LedgerContext for Ledger {
     type AccountId = Account;
-    type Approvals = AllowanceTable<ApprovalKey, Account>;
+    type Approvals = AllowanceTable<ApprovalKey, Account, Tokens>;
     type BalancesStore = HashMap<Self::AccountId, Tokens>;
+    type Tokens = Tokens;
 
     fn balances(&self) -> &Balances<Self::BalancesStore> {
         &self.balances
@@ -245,11 +277,11 @@ impl LedgerContext for Ledger {
     }
 
     fn approvals(&self) -> &Self::Approvals {
-        unimplemented!()
+        &self.approvals
     }
 
     fn approvals_mut(&mut self) -> &mut Self::Approvals {
-        unimplemented!()
+        &mut self.approvals
     }
 
     fn fee_collector(&self) -> Option<&FeeCollector<Self::AccountId>> {
@@ -354,6 +386,10 @@ impl Ledger {
         records
     }
 
+    pub fn feature_flags(&self) -> &FeatureFlags {
+        &self.feature_flags
+    }
+
     pub fn upgrade(&mut self, args: UpgradeArgs) {
         if let Some(upgrade_metadata_args) = args.metadata {
             self.metadata = upgrade_metadata_args
@@ -384,6 +420,9 @@ impl Ledger {
                     "The fee collector account cannot be the same account as the minting account",
                 );
             }
+        }
+        if let Some(feature_flags) = args.feature_flags {
+            self.feature_flags = feature_flags;
         }
     }
 

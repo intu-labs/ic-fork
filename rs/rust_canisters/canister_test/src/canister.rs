@@ -401,13 +401,6 @@ impl<'a> Runtime {
             .await
             .map_err(|e| format!("Creation of a canister timed out. Last error was: {}", e))
     }
-
-    /// Clean up the run times (if any clean up is needed)
-    pub fn stop(&self) {
-        if let Runtime::Local(r) = self {
-            r.stop();
-        }
-    }
 }
 
 /// An Internet Computer test runtime that talks to the IC using http
@@ -460,7 +453,7 @@ where
 
 /// Same as local_test but running a custom Config and applying initial Registry
 /// mutations
-pub fn local_test_with_config_with_mutations<Fut, Out, F>(
+pub fn local_test_with_config_with_mutations_on_system_subnet<Fut, Out, F>(
     config: Config,
     mutations: Vec<RegistryMutation>,
     run: F,

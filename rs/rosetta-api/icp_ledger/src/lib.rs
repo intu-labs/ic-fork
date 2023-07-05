@@ -8,6 +8,7 @@ use ic_ledger_core::{
     approvals::Approvals,
     balances::Balances,
     block::{BlockType, EncodedBlock, FeeCollector},
+    tokens::CheckedAdd,
 };
 use ic_ledger_hash_of::HashOf;
 use ic_ledger_hash_of::HASH_LENGTH;
@@ -42,6 +43,8 @@ pub use validate_endpoints::{tokens_from_proto, tokens_into_proto};
 pub const DEFAULT_TRANSFER_FEE: Tokens = Tokens::from_e8s(10_000);
 
 pub const MAX_BLOCKS_PER_REQUEST: usize = 2000;
+
+pub const MEMO_SIZE_BYTES: usize = 32;
 
 pub type LedgerBalances = Balances<HashMap<AccountIdentifier, Tokens>>;
 
@@ -112,9 +115,9 @@ pub fn apply_operation<C>(
     context: &mut C,
     operation: &Operation,
     now: TimeStamp,
-) -> Result<(), TxApplyError>
+) -> Result<(), TxApplyError<C::Tokens>>
 where
-    C: LedgerContext<AccountId = AccountIdentifier>,
+    C: LedgerContext<AccountId = AccountIdentifier, Tokens = Tokens>,
 {
     match operation {
         Operation::Transfer {
@@ -207,6 +210,7 @@ pub struct Transaction {
 
 impl LedgerTransaction for Transaction {
     type AccountId = AccountIdentifier;
+    type Tokens = Tokens;
 
     fn burn(
         from: Self::AccountId,
@@ -236,10 +240,10 @@ impl LedgerTransaction for Transaction {
         &self,
         context: &mut C,
         now: TimeStamp,
-        _effective_fee: Tokens,
-    ) -> Result<(), TxApplyError>
+        _effective_fee: C::Tokens,
+    ) -> Result<(), TxApplyError<C::Tokens>>
     where
-        C: LedgerContext<AccountId = Self::AccountId>,
+        C: LedgerContext<AccountId = Self::AccountId, Tokens = Tokens>,
     {
         apply_operation(context, &self.operation, now)
     }
@@ -329,6 +333,7 @@ impl Block {
 impl BlockType for Block {
     type Transaction = Transaction;
     type AccountId = AccountIdentifier;
+    type Tokens = Tokens;
 
     fn encode(self) -> EncodedBlock {
         EncodedBlock::from_vec(
@@ -523,7 +528,9 @@ impl LedgerCanisterInitPayloadBuilder {
         // verify ledger's invariant about the maximum amount
         let mut sum = Tokens::ZERO;
         for initial_value in self.initial_values.values() {
-            sum = (sum + *initial_value).map_err(|_| "initial_values sum overflows".to_string())?
+            sum = sum
+                .checked_add(initial_value)
+                .ok_or_else(|| "initial_values sum overflows".to_string())?
         }
 
         // Don't allow self-transfers of the minting canister
@@ -761,7 +768,9 @@ pub enum CandidOperation {
     Approve {
         from: AccountIdBlob,
         spender: AccountIdBlob,
-        allowance_e8s: u64,
+        // This field is deprecated and should not be used.
+        allowance_e8s: i128,
+        allowance: Tokens,
         fee: Tokens,
         expires_at: Option<TimeStamp>,
     },
@@ -805,9 +814,10 @@ impl From<Operation> for CandidOperation {
             } => Self::Approve {
                 from: from.to_address(),
                 spender: spender.to_address(),
-                allowance_e8s: allowance.get_e8s(),
+                allowance_e8s: allowance.get_e8s() as i128,
                 fee,
                 expires_at,
+                allowance,
             },
             Operation::TransferFrom {
                 from,
@@ -856,13 +866,14 @@ impl TryFrom<CandidOperation> for Operation {
             CandidOperation::Approve {
                 from,
                 spender,
-                allowance_e8s,
                 fee,
                 expires_at,
+                allowance,
+                ..
             } => Operation::Approve {
                 spender: address_to_accountidentifier(spender)?,
                 from: address_to_accountidentifier(from)?,
-                allowance: Tokens::from_e8s(allowance_e8s),
+                allowance,
                 fee,
                 expires_at,
             },
@@ -997,20 +1008,20 @@ pub struct TipOfChainRes {
     pub tip_index: BlockIndex,
 }
 
-#[derive(Serialize, Deserialize, CandidType)]
+#[derive(Serialize, Deserialize, CandidType, Debug, Clone)]
 pub struct GetBlocksArgs {
     pub start: BlockIndex,
     pub length: usize,
 }
 
-#[derive(Serialize, Deserialize, CandidType, Debug)]
+#[derive(Serialize, Deserialize, CandidType, Debug, Clone)]
 pub struct BlockRange {
     pub blocks: Vec<CandidBlock>,
 }
 
 pub type GetBlocksResult = Result<BlockRange, GetBlocksError>;
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, CandidType)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize, CandidType, Clone)]
 pub enum GetBlocksError {
     BadFirstBlockIndex {
         requested_index: BlockIndex,
@@ -1074,7 +1085,7 @@ pub fn iter_blocks(blocks: &[EncodedBlock], offset: usize, length: usize) -> Ite
     IterBlocksRes(blocks)
 }
 
-#[derive(CandidType, Deserialize)]
+#[derive(CandidType, Deserialize, Clone)]
 pub enum CyclesResponse {
     CanisterCreated(CanisterId),
     // Silly requirement by the candid derivation
@@ -1082,60 +1093,14 @@ pub enum CyclesResponse {
     Refunded(String, Option<BlockIndex>),
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(try_from = "candid::types::reference::Func")]
-pub struct QueryArchiveFn {
-    pub canister_id: CanisterId,
-    pub method: String,
-}
-
-impl From<QueryArchiveFn> for candid::types::reference::Func {
-    fn from(archive_fn: QueryArchiveFn) -> Self {
-        let p: &PrincipalId = archive_fn.canister_id.as_ref();
-        Self {
-            principal: p.0,
-            method: archive_fn.method,
-        }
-    }
-}
-
-impl TryFrom<candid::types::reference::Func> for QueryArchiveFn {
-    type Error = String;
-    fn try_from(func: candid::types::reference::Func) -> Result<Self, Self::Error> {
-        let canister_id = CanisterId::try_from(func.principal.as_slice())
-            .map_err(|e| format!("principal is not a canister id: {}", e))?;
-        Ok(QueryArchiveFn {
-            canister_id,
-            method: func.method,
-        })
-    }
-}
-
-impl CandidType for QueryArchiveFn {
-    fn _ty() -> candid::types::Type {
-        candid::types::Type::Func(candid::types::Function {
-            modes: vec![candid::parser::types::FuncMode::Query],
-            args: vec![GetBlocksArgs::_ty()],
-            rets: vec![GetBlocksResult::_ty()],
-        })
-    }
-
-    fn idl_serialize<S>(&self, serializer: S) -> Result<(), S::Error>
-    where
-        S: candid::types::Serializer,
-    {
-        candid::types::reference::Func::from(self.clone()).idl_serialize(serializer)
-    }
-}
-
-#[derive(Debug, CandidType, Deserialize)]
+#[derive(Debug, CandidType, Deserialize, Clone)]
 pub struct ArchivedBlocksRange {
     pub start: BlockIndex,
     pub length: u64,
-    pub callback: QueryArchiveFn,
+    pub callback: QueryArchiveBlocksFn,
 }
 
-#[derive(Debug, CandidType, Deserialize)]
+#[derive(Debug, CandidType, Deserialize, Clone)]
 pub struct QueryBlocksResponse {
     pub chain_length: u64,
     pub certificate: Option<serde_bytes::ByteBuf>,
@@ -1143,3 +1108,26 @@ pub struct QueryBlocksResponse {
     pub first_block_index: BlockIndex,
     pub archived_blocks: Vec<ArchivedBlocksRange>,
 }
+
+#[derive(Debug, CandidType, Deserialize, Clone)]
+pub struct QueryEncodedBlocksResponse {
+    pub chain_length: u64,
+    pub certificate: Option<serde_bytes::ByteBuf>,
+    pub blocks: Vec<EncodedBlock>,
+    pub first_block_index: BlockIndex,
+    pub archived_blocks: Vec<ArchivedEncodedBlocksRange>,
+}
+
+pub type GetEncodedBlocksResult = Result<Vec<EncodedBlock>, GetBlocksError>;
+
+#[derive(Debug, CandidType, Deserialize, Clone)]
+pub struct ArchivedEncodedBlocksRange {
+    pub start: BlockIndex,
+    pub length: u64,
+    pub callback: QueryArchiveEncodedBlocksFn,
+}
+
+pub type QueryArchiveBlocksFn =
+    icrc_ledger_types::icrc3::archive::QueryArchiveFn<GetBlocksArgs, GetBlocksResult>;
+pub type QueryArchiveEncodedBlocksFn =
+    icrc_ledger_types::icrc3::archive::QueryArchiveFn<GetBlocksArgs, GetEncodedBlocksResult>;

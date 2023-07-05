@@ -15,12 +15,13 @@ use crate::{
             VMCreateResponse, VmType,
         },
         ic::{AmountOfMemoryKiB, NrOfVCPUs, VmAllocationStrategy, VmResources},
+        log_events,
         resource::{DiskImage, ImageType},
         test_env::{HasIcPrepDir, TestEnv, TestEnvAttribute},
         test_env_api::{
             get_ssh_session_from_env, retry, AcquirePlaynetCertificate, CreatePlaynetDnsRecords,
             HasDependencies, HasPublicApiUrl, HasTestEnv, HasTopologySnapshot, HasVmName,
-            IcNodeContainer, RetrieveIpv4Addr, SshSession, READY_WAIT_TIMEOUT, RETRY_BACKOFF,
+            IcNodeContainer, RetrieveIpv4Addr, SshSession, RETRY_BACKOFF, SSH_RETRY_TIMEOUT,
         },
         test_setup::GroupSetup,
     },
@@ -40,6 +41,7 @@ use crate::driver::{
     farm::{FileId, PlaynetCertificate},
     test_env_api::HasIcDependencies,
 };
+
 // The following default values are the same as for replica nodes
 const DEFAULT_VCPUS_PER_VM: NrOfVCPUs = NrOfVCPUs::new(6);
 const DEFAULT_MEMORY_KIB_PER_VM: AmountOfMemoryKiB = AmountOfMemoryKiB::new(25165824); // 24GiB
@@ -50,6 +52,8 @@ const BOUNDARY_NODE_PLAYNET_PATH: &str = "playnet.json";
 const CONF_IMG_FNAME: &str = "config_disk.img";
 const CERT_DIR: &str = "certificate";
 const PLAYNET_PATH: &str = "playnet.json";
+// Be mindful when modifying this constant, as the event can be consumed by other parties.
+const BN_AAAA_RECORDS_CREATED_EVENT_NAME: &str = "bn_aaaa_records_created_event";
 
 fn mk_compressed_img_path() -> std::string::String {
     format!("{}.gz", CONF_IMG_FNAME)
@@ -190,11 +194,8 @@ impl BoundaryNodeWithVm {
                     records: vec![bn_fqdn.clone()],
                 },
             ]);
-
-            info!(
-                &logger,
-                "Created AAAA records {} to {:?}", bn_fqdn, existing_playnet.aaaa_records
-            );
+            // Emit a json log event, to be consumed by log post-processing tools.
+            emit_bn_aaaa_records_event(&logger, &bn_fqdn, existing_playnet.aaaa_records.clone());
             Some(existing_playnet)
         } else {
             None
@@ -317,10 +318,8 @@ impl BoundaryNode {
     }
 
     pub fn allocate_vm(self, env: &TestEnv) -> Result<BoundaryNodeWithVm> {
-        let logger = env.logger();
+        let farm = Farm::from_test_env(env, "boundary node");
         let pot_setup = GroupSetup::read_attribute(env);
-        let farm_url = env.get_farm_url()?;
-        let farm = Farm::new(farm_url, logger.clone());
         let boundary_node_img_url = env.get_boundary_node_img_url()?;
         let boundary_node_img_sha256 = env.get_boundary_node_img_sha256()?;
 
@@ -621,7 +620,7 @@ impl SshSession for BoundaryNodeSnapshot {
     }
 
     fn block_on_ssh_session(&self) -> Result<Session> {
-        retry(self.env.logger(), READY_WAIT_TIMEOUT, RETRY_BACKOFF, || {
+        retry(self.env.logger(), SSH_RETRY_TIMEOUT, RETRY_BACKOFF, || {
             self.get_ssh_session()
         })
     }
@@ -693,4 +692,20 @@ struct Playnet {
     playnet_cert: PlaynetCertificate,
     aaaa_records: Vec<String>,
     a_records: Vec<String>,
+}
+
+pub fn emit_bn_aaaa_records_event(log: &slog::Logger, bn_fqdn: &str, aaaa_records: Vec<String>) {
+    #[derive(Serialize, Deserialize)]
+    pub struct BoundaryNodeAAAARecords {
+        url: String,
+        aaaa_records: Vec<String>,
+    }
+    let event = log_events::LogEvent::new(
+        BN_AAAA_RECORDS_CREATED_EVENT_NAME.to_string(),
+        BoundaryNodeAAAARecords {
+            url: bn_fqdn.to_string(),
+            aaaa_records,
+        },
+    );
+    event.emit_log(log);
 }

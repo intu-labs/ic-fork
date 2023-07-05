@@ -148,6 +148,7 @@ def external_crates_repository(name, static_openssl, cargo_lockfile, lockfile):
             "axum-server": crate.spec(
                 version = "^0.5.1",
                 features = [
+                    "tls-openssl",
                     "tls-rustls",
                 ],
             ),
@@ -190,6 +191,9 @@ def external_crates_repository(name, static_openssl, cargo_lockfile, lockfile):
             ),
             "bitcoincore-rpc": crate.spec(
                 version = "^0.15.0",
+            ),
+            "bitcoind": crate.spec(
+                version = "^0.32.0",
             ),
             "bitflags": crate.spec(
                 version = "^1.2.1",
@@ -336,6 +340,9 @@ def external_crates_repository(name, static_openssl, cargo_lockfile, lockfile):
                 version = "^0.5.7",
                 features = ["print"],
             ),
+            "ethnum": crate.spec(
+                version = "^1.3.2",
+            ),
             "exec": crate.spec(
                 version = "^0.3.1",
             ),
@@ -412,6 +419,9 @@ def external_crates_repository(name, static_openssl, cargo_lockfile, lockfile):
             "http-body": crate.spec(
                 version = "^0.4",
             ),
+            "http-serde": crate.spec(
+                version = "^1.1.2",
+            ),
             "httparse": crate.spec(
                 version = "^1.5.1",
             ),
@@ -461,7 +471,7 @@ def external_crates_repository(name, static_openssl, cargo_lockfile, lockfile):
             ),
             "ic-btc-interface": crate.spec(
                 git = "https://github.com/dfinity/bitcoin-canister",
-                rev = "e4e89f2caedffbe0cfdec6f9d4a77f66dcb9119e",
+                rev = "b1693619e3d4dbc00d8c79e9b6886e1db48b21f7",
             ),
             "ic-btc-validation": crate.spec(
                 git = "https://github.com/dfinity/bitcoin-canister",
@@ -469,7 +479,7 @@ def external_crates_repository(name, static_openssl, cargo_lockfile, lockfile):
             ),
             "ic-btc-test-utils": crate.spec(
                 git = "https://github.com/dfinity/bitcoin-canister",
-                rev = "e4e89f2caedffbe0cfdec6f9d4a77f66dcb9119e",
+                rev = "b1693619e3d4dbc00d8c79e9b6886e1db48b21f7",
             ),
             "ic-cdk": crate.spec(
                 version = "0.7.0",
@@ -607,6 +617,13 @@ def external_crates_repository(name, static_openssl, cargo_lockfile, lockfile):
             "maplit": crate.spec(
                 version = "^1.0.2",
             ),
+            "minicbor": crate.spec(
+                version = "^0.19.1",
+                features = ["alloc", "derive"],
+            ),
+            "minicbor-derive": crate.spec(
+                version = "^0.13.0",
+            ),
             "mio": crate.spec(
                 version = "^0.7",
                 features = [
@@ -677,7 +694,7 @@ def external_crates_repository(name, static_openssl, cargo_lockfile, lockfile):
                 version = "^0.5.0",
             ),
             "openssl": crate.spec(
-                version = "^0.10.29",
+                version = "^0.10.55",
             ),
             "openssl-sys": crate.spec(
                 version = "0.9",
@@ -793,6 +810,12 @@ def external_crates_repository(name, static_openssl, cargo_lockfile, lockfile):
             "quickcheck": crate.spec(
                 version = "^1.0.3",
             ),
+            "quinn": crate.spec(
+                version = "^0.10.0",
+                features = [
+                    "ring",
+                ],
+            ),
             "quote": crate.spec(
                 version = "^1.0",
             ),
@@ -867,6 +890,9 @@ def external_crates_repository(name, static_openssl, cargo_lockfile, lockfile):
                 package = "rsa",
                 version = "^0.4.0",
             ),
+            "rstack-self": crate.spec(
+                version = "^0.3",
+            ),
             "rusqlite": crate.spec(
                 version = "^0.28.0",
                 features = ["bundled"],
@@ -882,6 +908,9 @@ def external_crates_repository(name, static_openssl, cargo_lockfile, lockfile):
             ),
             "rustls": crate.spec(
                 version = "^0.21.0",
+                features = [
+                    "dangerous_configuration",
+                ],
             ),
             "rustls-native-certs": crate.spec(
                 version = "^0.6.2",
@@ -1091,6 +1120,9 @@ def external_crates_repository(name, static_openssl, cargo_lockfile, lockfile):
             "tokio-io-timeout": crate.spec(
                 version = "^1.2.0",
             ),
+            "tokio-metrics": crate.spec(
+                version = "^0.2.2",
+            ),
             "tokio-openssl": crate.spec(
                 version = "^0.6.1",
             ),
@@ -1117,6 +1149,7 @@ def external_crates_repository(name, static_openssl, cargo_lockfile, lockfile):
                 version = "^0.7.4",
                 features = [
                     "codec",
+                    "time",
                 ],
             ),
             "toml": crate.spec(
@@ -1252,6 +1285,11 @@ def external_crates_repository(name, static_openssl, cargo_lockfile, lockfile):
             ),
             "x509-parser": crate.spec(
                 version = "^0.12.0",
+            ),
+            "x509-parser_0_15": crate.spec(
+                package = "x509-parser",
+                version = "^0.15.0",
+                features = ["verify"],
             ),
             "yansi": crate.spec(
                 version = "^0.5.0",

@@ -1,4 +1,5 @@
 use crate::logs::{P0, P1};
+use crate::memo::MintMemo;
 use crate::state::{mutate_state, read_state, UtxoCheckStatus};
 use crate::tasks::{schedule_now, TaskType};
 use candid::{CandidType, Deserialize, Nat, Principal};
@@ -21,20 +22,33 @@ use crate::{
     updates::get_btc_address,
 };
 
+/// The argument of the [update_balance] endpoint.
 #[derive(CandidType, Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct UpdateBalanceArgs {
+    /// The owner of the account on the ledger.
+    /// The minter uses the caller principal if the owner is None.
     pub owner: Option<Principal>,
+    /// The desired subaccount on the ledger, if any.
     pub subaccount: Option<Subaccount>,
 }
 
+/// The outcome of UTXO processing.
 #[derive(CandidType, Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub enum UtxoStatus {
+    /// The utxo value does not cover the KYT check cost.
     ValueTooSmall(Utxo),
+    /// The KYT check found issues with the deposited UTXO.
     Tainted(Utxo),
+    /// The deposited UTXO passed the KYT check, but the minter failed to mint ckBTC on the ledger.
+    /// The caller should retry the [update_balance] call.
     Checked(Utxo),
+    /// The minter accepted the UTXO and minted ckBTC tokens on the ledger.
     Minted {
+        /// The MINT transaction index on the ledger.
         block_index: u64,
+        /// The minted amount (UTXO value minus fees).
         minted_amount: u64,
+        /// The UTXO that caused the balance update.
         utxo: Utxo,
     },
 }
@@ -45,13 +59,17 @@ pub enum ErrorCode {
 
 #[derive(CandidType, Clone, Debug, Deserialize, PartialEq, Eq)]
 pub enum UpdateBalanceError {
+    /// The minter experiences temporary issues, try the call again later.
     TemporarilyUnavailable(String),
+    /// There is a concurrent [update_balance] invocation from the same caller.
     AlreadyProcessing,
+    /// The minter didn't discover new UTXOs with enough confirmations.
     NoNewUtxos {
         /// If there are new UTXOs that do not have enough
         /// confirmations yet, this field will contain the number of
         /// confirmations as observed by the minter.
         current_confirmations: Option<u32>,
+        /// The minimum number of UTXO confirmation required for the minter to accept a UTXO.
         required_confirmations: u32,
     },
     GenericError {
@@ -135,7 +153,7 @@ pub async fn update_balance(
 
     if satoshis_to_mint == 0 {
         // We bail out early if there are no UTXOs to avoid creating a new entry
-        // in the UTXOs map.  If we allowed empty entries, malicious callers
+        // in the UTXOs map. If we allowed empty entries, malicious callers
         // could exhaust the canister memory.
 
         // We get the entire list of UTXOs again with a zero
@@ -194,7 +212,13 @@ pub async fn update_balance(
             continue;
         }
         let amount = utxo.value - kyt_fee;
-        match mint(amount, &utxo.outpoint.txid, caller_account).await {
+        let memo = MintMemo::Convert {
+            txid: Some(&utxo.outpoint.txid),
+            vout: Some(utxo.outpoint.vout),
+            kyt_fee: Some(kyt_fee),
+        };
+
+        match mint(amount, caller_account, crate::memo::encode(&memo).into()).await {
             Ok(block_index) => {
                 log!(
                     P1,
@@ -292,9 +316,8 @@ async fn kyt_check_utxo(
 }
 
 /// Mint an amount of ckBTC to an Account.
-async fn mint(amount: u64, txid: &[u8], to: Account) -> Result<u64, UpdateBalanceError> {
-    const MAX_MEMO_LENGTH: usize = 32;
-    debug_assert!(txid.len() <= MAX_MEMO_LENGTH);
+async fn mint(amount: u64, to: Account, memo: Memo) -> Result<u64, UpdateBalanceError> {
+    debug_assert!(memo.0.len() <= crate::CKBTC_LEDGER_MEMO_SIZE as usize);
     let client = ICRC1Client {
         runtime: CdkRuntime,
         ledger_canister_id: state::read_state(|s| s.ledger_id.get().into()),
@@ -305,7 +328,7 @@ async fn mint(amount: u64, txid: &[u8], to: Account) -> Result<u64, UpdateBalanc
             to,
             fee: None,
             created_at_time: None,
-            memo: Some(Memo::from(txid.to_vec())),
+            memo: Some(memo),
             amount: Nat::from(amount),
         })
         .await

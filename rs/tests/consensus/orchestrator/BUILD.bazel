@@ -71,6 +71,7 @@ system_test(
 
 system_test(
     name = "sr_app_same_nodes_enable_tecdsa_test",
+    ic_os_fixed_version = False,
     proc_macro_deps = MACRO_DEPENDENCIES,
     tags = [
         "subnet_recovery",
@@ -84,6 +85,7 @@ system_test(
 
 system_test(
     name = "sr_app_same_nodes_with_tecdsa_test",
+    ic_os_fixed_version = False,
     proc_macro_deps = MACRO_DEPENDENCIES,
     tags = [
         "subnet_recovery",
@@ -207,6 +209,7 @@ system_test(
 
 system_test(
     name = "unstuck_subnet_test",
+    ic_os_fixed_version = False,
     proc_macro_deps = MACRO_DEPENDENCIES,
     tags = [
         "system_test_hourly",
@@ -221,6 +224,11 @@ system_test(
     name = "upgrade_downgrade_app_subnet_test",
     ic_os_fixed_version = False,
     proc_macro_deps = MACRO_DEPENDENCIES,
+    # TODO: remove tags and move the test back to MR pipelines when it will work with `ic_os_fixed_version = True`
+    tags = [
+        "system_test_hourly",
+        "system_test_nightly",
+    ],
     target_compatible_with = ["@platforms//os:linux"],  # requires libssh that does not build on Mac OS
     runtime_deps =
         GUESTOS_RUNTIME_DEPS +
@@ -235,6 +243,11 @@ system_test(
     name = "upgrade_downgrade_nns_subnet_test",
     ic_os_fixed_version = False,
     proc_macro_deps = MACRO_DEPENDENCIES,
+    # TODO: remove tags and move the test back to MR pipelines when it will work with `ic_os_fixed_version = True`
+    tags = [
+        "system_test_hourly",
+        "system_test_nightly",
+    ],
     target_compatible_with = ["@platforms//os:linux"],  # requires libssh that does not build on Mac OS
     runtime_deps =
         GUESTOS_RUNTIME_DEPS +
@@ -247,6 +260,7 @@ system_test(
 
 system_test(
     name = "upgrade_with_alternative_urls",
+    ic_os_fixed_version = False,
     proc_macro_deps = MACRO_DEPENDENCIES,
     tags = [
         "system_test_hourly",
@@ -259,13 +273,14 @@ system_test(
 
 system_test(
     name = "unassigned_node_upgrade_test",
+    ic_os_fixed_version = False,
     proc_macro_deps = MACRO_DEPENDENCIES,
     tags = [
         "system_test_hourly",
         "system_test_nightly",
     ],
     target_compatible_with = ["@platforms//os:linux"],
-    runtime_deps = GUESTOS_RUNTIME_DEPS + UNIVERSAL_VM_RUNTIME_DEPS + NNS_CANISTER_RUNTIME_DEPS,
+    runtime_deps = GUESTOS_RUNTIME_DEPS + UNIVERSAL_VM_RUNTIME_DEPS + NNS_CANISTER_RUNTIME_DEPS + SUBNET_RECOVERY_RUNTIME_DEPS,
     deps = DEPENDENCIES + ["//rs/tests"],
 )
 

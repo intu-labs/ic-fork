@@ -239,6 +239,10 @@ pub struct Config {
 
     /// The capacity of the Wasm compilation cache.
     pub max_compilation_cache_size: NumBytes,
+
+    /// If this flag is enabled, then execution of a slice will produce a log
+    /// entry with the number of executed instructions and the duration.
+    pub trace_execution: FlagStatus,
 }
 
 impl Default for Config {
@@ -300,7 +304,7 @@ impl Default for Config {
                 testnet_canister_id: Some(bitcoin_testnet_canister_id),
                 mainnet_canister_id: Some(bitcoin_mainnet_canister_id),
             },
-            composite_queries: FlagStatus::Disabled,
+            composite_queries: FlagStatus::Enabled,
             query_caching: FlagStatus::Enabled,
             query_cache_capacity: QUERY_CACHE_CAPACITY,
             min_sandbox_count: embedders::DEFAULT_MIN_SANDBOX_COUNT,
@@ -310,6 +314,7 @@ impl Default for Config {
                 embedders::STABLE_MEMORY_DIRTY_PAGE_LIMIT,
             ),
             max_compilation_cache_size: MAX_COMPILATION_CACHE_SIZE,
+            trace_execution: FlagStatus::Disabled,
         }
     }
 }

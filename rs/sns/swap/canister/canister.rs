@@ -15,9 +15,10 @@ use ic_nervous_system_clients::{
 use ic_nervous_system_common::{
     dfn_core_stable_mem_utils::BufferedStableMemReader, serve_logs, serve_logs_v2, serve_metrics,
 };
+use ic_nervous_system_runtime::DfnRuntime;
 use ic_sns_governance::ledger::LedgerCanister;
 use ic_sns_swap::{
-    clients::{RealNnsGovernanceClient, RealSnsGovernanceClient, RealSnsRootClient},
+    clients::RealSnsRootClient,
     logs::{ERROR, INFO},
     memory::UPGRADES_MEMORY,
     pb::v1::{
@@ -194,24 +195,12 @@ fn finalize_swap() {
 #[candid_method(update, rename = "finalize_swap")]
 async fn finalize_swap_(_arg: FinalizeSwapRequest) -> FinalizeSwapResponse {
     log!(INFO, "finalize_swap");
-    let mut sns_root_client = RealSnsRootClient::new(swap().init_or_panic().sns_root_or_panic());
-    let mut sns_governance_client =
-        RealSnsGovernanceClient::new(swap().init_or_panic().sns_governance_or_panic());
-    let icp_ledger = create_real_icp_ledger(swap().init_or_panic().icp_ledger_or_panic());
-    let sns_ledger = create_real_icrc1_ledger(swap().init_or_panic().sns_ledger_or_panic());
-    let mut nns_governance_client =
-        RealNnsGovernanceClient::new(swap().init_or_panic().nns_governance_or_panic());
+    let mut clients = swap()
+        .init_or_panic()
+        .environment()
+        .expect("unable to create canister clients");
 
-    swap_mut()
-        .finalize(
-            now_fn,
-            &mut sns_root_client,
-            &mut sns_governance_client,
-            &icp_ledger,
-            &sns_ledger,
-            &mut nns_governance_client,
-        )
-        .await
+    swap_mut().finalize(now_fn, &mut clients).await
 }
 
 #[export_name = "canister_update error_refund_icp"]
@@ -232,7 +221,7 @@ fn get_canister_status() {
 
 #[candid_method(update, rename = "get_canister_status")]
 async fn get_canister_status_(_request: GetCanisterStatusRequest) -> CanisterStatusResultV2 {
-    do_get_canister_status(id(), &ManagementCanisterClientImpl::new(None)).await
+    do_get_canister_status(id(), &ManagementCanisterClientImpl::<DfnRuntime>::new(None)).await
 }
 
 async fn do_get_canister_status(
@@ -391,8 +380,10 @@ fn notify_payment_failure_(_request: NotifyPaymentFailureRequest) -> NotifyPayme
 /// Tries to commit or abort the swap if the parameters have been satisfied.
 #[export_name = "canister_heartbeat"]
 fn canister_heartbeat() {
-    let now_seconds = now_seconds();
-    swap_mut().run_periodic_tasks(now_seconds);
+    let future = swap_mut().heartbeat(now_fn);
+
+    // The canister_heartbeat must be synchronous, so we cannot .await the future.
+    dfn_core::api::futures::spawn(future);
 }
 
 fn now_seconds() -> u64 {

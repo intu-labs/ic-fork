@@ -9,9 +9,12 @@ rust_library(
     version = "0.8.0",
     deps = [
         "//rs/crypto/internal/crypto_lib/threshold_sig/tecdsa",
+        "//rs/crypto/internal/crypto_service_provider",
         "//rs/crypto/temp_crypto",
+        "//rs/crypto/test_utils/reproducible_rng",
         "//rs/interfaces",
         "//rs/monitoring/logger",
+        "//rs/protobuf",
         "//rs/registry/fake",
         "//rs/registry/keys",
         "//rs/registry/proto_data_provider",

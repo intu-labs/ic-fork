@@ -71,12 +71,6 @@ fn build_log_proto(def: &Path, out: &Path) {
 
     add_log_proto_derives!(
         config,
-        ReplicaConfig,
-        "log.replica_config.v1",
-        replica_config
-    );
-    add_log_proto_derives!(
-        config,
         ConsensusLogEntry,
         "log.consensus_log_entry.v1",
         consensus,
@@ -387,7 +381,10 @@ fn build_crypto_proto(def: &Path, out: &Path) {
 fn build_p2p_proto(def: &Path, out: &Path) {
     let mut config = base_config(out, "p2p");
     config.type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]");
-    let files = [def.join("p2p/v1/p2p.proto")];
+    let files = [
+        def.join("p2p/v1/p2p.proto"),
+        def.join("p2p/v1/state_sync_manager.proto"),
+    ];
     compile_protos(config, def, &files);
 }
 

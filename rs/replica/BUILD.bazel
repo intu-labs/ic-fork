@@ -4,6 +4,7 @@ load("//bazel:defs.bzl", "rust_bench")
 package(default_visibility = ["//visibility:public"])
 
 DEPENDENCIES = [
+    "//rs/artifact_pool",
     "//rs/async_utils",
     "//rs/bitcoin/client",
     "//rs/bitcoin/consensus",
@@ -22,7 +23,6 @@ DEPENDENCIES = [
     "//rs/interfaces",
     "//rs/interfaces/adapter_client",
     "//rs/interfaces/certified_stream_store",
-    "//rs/interfaces/p2p",
     "//rs/interfaces/registry",
     "//rs/messaging",
     "//rs/monitoring/logger",
@@ -47,6 +47,7 @@ DEPENDENCIES = [
     "//rs/xnet/payload_builder",
     "@crate_index//:base64",
     "@crate_index//:clap",
+    "@crate_index//:crossbeam-channel",
     "@crate_index//:hex",
     "@crate_index//:jemalloc-ctl",
     "@crate_index//:jemallocator",
@@ -69,7 +70,12 @@ DEPENDENCIES = [
     "@crate_index//:tokio",
     "@crate_index//:tower",
     "@crate_index//:tracing",
-]
+] + select({
+    "@rules_rust//rust/platform:linux": [
+        "//rs/monitoring/backtrace",
+    ],
+    "//conditions:default": [],
+})
 
 MACRO_DEPENDENCIES = []
 
@@ -134,7 +140,7 @@ rust_test(
 )
 
 rust_test_suite(
-    name = "replica_integration_tests",
+    name = "replica_integration",
     srcs = glob(["tests/**/*.rs"]),
     aliases = ALIASES,
     data = [":replica"],

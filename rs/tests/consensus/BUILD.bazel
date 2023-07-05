@@ -22,6 +22,7 @@ system_test(
 
 system_test(
     name = "catch_up_loop_prevention_test",
+    ic_os_fixed_version = False,
     proc_macro_deps = MACRO_DEPENDENCIES,
     tags = [
         "system_test_hourly",
@@ -34,6 +35,7 @@ system_test(
 
 system_test(
     name = "catch_up_possible_test",
+    ic_os_fixed_version = False,
     proc_macro_deps = MACRO_DEPENDENCIES,
     tags = [
         "system_test_hourly",
@@ -134,7 +136,6 @@ system_test(
     flaky = False,
     proc_macro_deps = MACRO_DEPENDENCIES,
     tags = [
-        "dynamic_testnet",
         "experimental_system_test_colocation",
         "manual",
     ],
@@ -154,7 +155,6 @@ system_test(
     flaky = False,
     proc_macro_deps = MACRO_DEPENDENCIES,
     tags = [
-        "dynamic_testnet",
         "experimental_system_test_colocation",
         "manual",
     ],
@@ -174,7 +174,6 @@ system_test(
     flaky = False,
     proc_macro_deps = MACRO_DEPENDENCIES,
     tags = [
-        "dynamic_testnet",
         "experimental_system_test_colocation",
         "manual",
     ],

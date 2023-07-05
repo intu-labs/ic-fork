@@ -1,8 +1,8 @@
-use candid::{Decode, Encode};
+use candid::{Decode, Encode, Nat};
 use ic_base_types::{CanisterId, PrincipalId};
 use ic_icp_index::{
     GetAccountIdentifierTransactionsArgs, GetAccountIdentifierTransactionsResponse,
-    GetAccountIdentifierTransactionsResult, TransactionWithId,
+    GetAccountIdentifierTransactionsResult, Status, TransactionWithId,
 };
 use ic_ledger_canister_core::archive::ArchiveOptions;
 use ic_ledger_core::block::BlockType;
@@ -13,6 +13,7 @@ use icp_ledger::{LedgerCanisterInitPayload, Memo, Operation, Transaction};
 use icrc_ledger_types::icrc1::account::Account;
 use icrc_ledger_types::icrc1::transfer::{BlockIndex, TransferArg, TransferError};
 use icrc_ledger_types::icrc3::blocks::GetBlocksRequest;
+use num_traits::cast::ToPrimitive;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::path::PathBuf;
@@ -95,6 +96,42 @@ fn account(owner: u64, subaccount: u128) -> Account {
     }
 }
 
+fn icrc1_balance_of(env: &StateMachine, canister_id: CanisterId, account: Account) -> u64 {
+    let res = env
+        .execute_ingress(canister_id, "icrc1_balance_of", Encode!(&account).unwrap())
+        .expect("Failed to send icrc1_balance_of")
+        .bytes();
+    Decode!(&res, Nat)
+        .expect("Failed to decode icrc1_balance_of response")
+        .0
+        .to_u64()
+        .expect("Balance must be a u64!")
+}
+
+fn index_balance_of(
+    env: &StateMachine,
+    canister_id: CanisterId,
+    account_identifier: AccountIdentifier,
+) -> u64 {
+    let res = env
+        .execute_ingress(
+            canister_id,
+            "get_account_identifier_balance",
+            Encode!(&account_identifier).unwrap(),
+        )
+        .expect("Failed to send get_account_identifier_balance")
+        .bytes();
+    Decode!(&res, u64).expect("Failed to decode get_account_identifier_balance response")
+}
+
+fn status(env: &StateMachine, index_id: CanisterId) -> Status {
+    let res = env
+        .query(index_id, "status", Encode!(&()).unwrap())
+        .expect("Failed to send status")
+        .bytes();
+    Decode!(&res, Status).expect("Failed to decode status response")
+}
+
 fn icp_get_blocks(env: &StateMachine, ledger_id: CanisterId) -> Vec<icp_ledger::Block> {
     let req = GetBlocksArgs {
         start: 0u64,
@@ -115,7 +152,11 @@ fn icp_get_blocks(env: &StateMachine, ledger_id: CanisterId) -> Vec<icp_ledger::
         let req = Encode!(&req).expect("Failed to encode GetBlocksArgs for archive node");
         let canister_id = archived.callback.canister_id;
         let res = env
-            .execute_ingress(canister_id, archived.callback.method, req)
+            .execute_ingress(
+                CanisterId::new(PrincipalId(canister_id)).unwrap(),
+                archived.callback.method,
+                req,
+            )
             .expect("Failed to send get_blocks request to archive")
             .bytes();
         let res = Decode!(&res, icp_ledger::GetBlocksResult).unwrap().unwrap();
@@ -196,6 +237,26 @@ fn get_account_identifier_transactions(
         .expect("Failed to perform GetAccountIdentifierTransactionsArgs")
 }
 
+// Helper function that calls tick on env until either
+// the index canister has synced all the blocks up to the
+// last one in the ledger or enough attempts passed and therefore
+// it fails
+fn wait_until_sync_is_completed(env: &StateMachine, index_id: CanisterId, ledger_id: CanisterId) {
+    const MAX_ATTEMPTS: u8 = 100; // no reason for this number
+    let mut num_blocks_synced = u64::MAX;
+    let mut chain_length = u64::MAX;
+    for _i in 0..MAX_ATTEMPTS {
+        env.advance_time(Duration::from_secs(60));
+        env.tick();
+        num_blocks_synced = status(env, index_id).num_blocks_synced;
+        chain_length = icp_get_blocks(env, ledger_id).len() as u64;
+        if num_blocks_synced == chain_length {
+            return;
+        }
+    }
+    panic!("The index canister was unable to sync all the blocks with the ledger. Number of blocks synced {} but the Ledger chain length is {}", num_blocks_synced, chain_length);
+}
+
 #[track_caller]
 fn assert_tx_eq(tx1: &Transaction, tx2: &Transaction) {
     assert_eq!(tx1.operation, tx2.operation);
@@ -232,11 +293,6 @@ fn assert_ledger_index_parity(env: &StateMachine, ledger_id: CanisterId, index_i
     assert_eq!(ledger_blocks, index_blocks);
 }
 
-fn trigger_sync(env: &StateMachine) {
-    env.advance_time(Duration::from_secs(60));
-    env.tick();
-}
-
 #[test]
 fn test_ledger_growing() {
     // check that the index canister can incrementally get the blocks from the ledger.
@@ -251,12 +307,14 @@ fn test_ledger_growing() {
     let index_id = install_index(env, ledger_id);
 
     // test initial mint block
-    trigger_sync(env);
+    wait_until_sync_is_completed(env, index_id, ledger_id);
+
     assert_ledger_index_parity(env, ledger_id, index_id);
 
     // test first transfer block
     transfer(env, ledger_id, account(1, 0), account(2, 0), 1);
-    trigger_sync(env);
+    wait_until_sync_is_completed(env, index_id, ledger_id);
+
     assert_ledger_index_parity(env, ledger_id, index_id);
 
     // test multiple blocks
@@ -267,14 +325,14 @@ fn test_ledger_growing() {
     ] {
         transfer(env, ledger_id, from, to, amount);
     }
-    trigger_sync(env);
+    wait_until_sync_is_completed(env, index_id, ledger_id);
     assert_ledger_index_parity(env, ledger_id, index_id);
 
     // test archived blocks
     for _i in 0..(ARCHIVE_TRIGGER_THRESHOLD as usize + 1) {
         transfer(env, ledger_id, account(1, 0), account(1, 2), 1);
     }
-    trigger_sync(env);
+    wait_until_sync_is_completed(env, index_id, ledger_id);
     assert_ledger_index_parity(env, ledger_id, index_id);
 }
 
@@ -294,7 +352,7 @@ fn test_archive_indexing() {
     let ledger_id = install_ledger(env, initial_balances, default_archive_options());
     let index_id = install_index(env, ledger_id);
 
-    trigger_sync(env);
+    wait_until_sync_is_completed(env, index_id, ledger_id);
     assert_ledger_index_parity(env, ledger_id, index_id);
 }
 
@@ -368,7 +426,7 @@ fn test_get_account_identifier_transactions() {
 
     ////////////
     //// phase 1: only 1 mint to (1, 0)
-    trigger_sync(env);
+    wait_until_sync_is_completed(env, index_id, ledger_id);
 
     // account (1, 0) has one mint
     let actual_txs =
@@ -385,7 +443,7 @@ fn test_get_account_identifier_transactions() {
     /////////////
     //// phase 2: transfer from (1, 0) to (2, 0)
     transfer(env, ledger_id, account(1, 0), account(2, 0), 1_000_000);
-    trigger_sync(env);
+    wait_until_sync_is_completed(env, index_id, ledger_id);
 
     // account (1, 0) has one transfer and one mint
     let actual_txs =
@@ -416,7 +474,7 @@ fn test_get_account_identifier_transactions() {
     ////          transfer from (2, 0) to (1, 1)
     transfer(env, ledger_id, account(1, 0), account(2, 0), 2_000_000);
     transfer(env, ledger_id, account(2, 0), account(1, 1), 1_000_000);
-    trigger_sync(env);
+    wait_until_sync_is_completed(env, index_id, ledger_id);
 
     // account (1, 0) has two transfers and one mint
     let actual_txs =
@@ -473,7 +531,8 @@ fn test_get_account_transactions_start_length() {
         })
         .collect();
 
-    trigger_sync(env);
+    wait_until_sync_is_completed(env, index_id, ledger_id);
+
     // get the most n recent transaction with start set to none
     for n in 1..10 {
         let actual_txs =
@@ -527,7 +586,7 @@ fn test_get_account_identifier_transactions_pagination() {
             i * 10_000,
         );
     }
-    trigger_sync(env);
+    wait_until_sync_is_completed(env, index_id, ledger_id);
 
     // The index get_account_identifier_transactions endpoint returns batches of transactions
     // in descending order of index, i.e. the first index returned in the result
@@ -583,4 +642,88 @@ fn test_get_account_identifier_transactions_pagination() {
         // order guarantee that last_seen_txid < start
         start = last_seen_txid;
     }
+}
+
+#[test]
+fn test_icp_balance_of() {
+    let initial_balances = HashMap::new();
+    let env = &StateMachine::new();
+    let ledger_id = install_ledger(env, initial_balances, default_archive_options());
+    let index_id = install_index(env, ledger_id);
+    for i in 0..10 {
+        transfer(
+            env,
+            ledger_id,
+            Account {
+                owner: MINTER_PRINCIPAL.into(),
+                subaccount: None,
+            },
+            account(1, 0),
+            i * 10_000,
+        );
+
+        transfer(
+            env,
+            ledger_id,
+            Account {
+                owner: MINTER_PRINCIPAL.into(),
+                subaccount: None,
+            },
+            account(2, 0),
+            i * 10_000,
+        );
+    }
+    wait_until_sync_is_completed(env, index_id, ledger_id);
+
+    // Test Mint operations
+    assert_eq!(
+        icrc1_balance_of(env, ledger_id, account(1, 0)),
+        index_balance_of(env, index_id, account(1, 0).into())
+    );
+    assert_eq!(
+        icrc1_balance_of(env, ledger_id, account(2, 0)),
+        index_balance_of(env, index_id, account(2, 0).into())
+    );
+
+    // Test burn operations
+    transfer(
+        env,
+        ledger_id,
+        account(1, 0),
+        Account {
+            owner: MINTER_PRINCIPAL.into(),
+            subaccount: None,
+        },
+        10_000,
+    );
+    wait_until_sync_is_completed(env, index_id, ledger_id);
+
+    assert_eq!(
+        icrc1_balance_of(env, ledger_id, account(1, 0)),
+        index_balance_of(env, index_id, account(1, 0).into())
+    );
+
+    // Test transfer operations
+    transfer(env, ledger_id, account(1, 0), account(2, 0), 10_000);
+    wait_until_sync_is_completed(env, index_id, ledger_id);
+
+    assert_eq!(
+        icrc1_balance_of(env, ledger_id, account(1, 0)),
+        index_balance_of(env, index_id, account(1, 0).into())
+    );
+    assert_eq!(
+        icrc1_balance_of(env, ledger_id, account(2, 0)),
+        index_balance_of(env, index_id, account(2, 0).into())
+    );
+    transfer(env, ledger_id, account(2, 0), account(3, 0), 10_000);
+    wait_until_sync_is_completed(env, index_id, ledger_id);
+
+    assert_eq!(
+        icrc1_balance_of(env, ledger_id, account(3, 0)),
+        index_balance_of(env, index_id, account(3, 0).into())
+    );
+    assert_eq!(
+        icrc1_balance_of(env, ledger_id, account(2, 0)),
+        index_balance_of(env, index_id, account(2, 0).into())
+    );
 }

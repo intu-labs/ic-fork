@@ -1,8 +1,10 @@
 gitlab-ci-config-validation:
   extends:
     - .ubuntu-k8s
-    - .rules-pipeline-no-merge-train
-  stage: test
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE != "merge_train"'
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE_NAME == "run-all-master"'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^rc--/'
   variables:
     PYTHONPATH : "${CI_PROJECT_DIR}/gitlab-ci/src:${CI_PROJECT_DIR}/gitlab-ci/src/dependencies"
   artifacts:
@@ -19,9 +21,11 @@ gitlab-ci-config-validation:
 python-gitlab-ci-tests:
   extends:
     - .ubuntu-k8s
-    - .rules-pipeline-no-merge-train
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_EVENT_TYPE != "merge_train" && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $SCHEDULE_NAME == "run-all-master"'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^rc--/'
   needs: []
-  stage: test
   variables:
     PYTHONPATH : "${CI_PROJECT_DIR}/gitlab-ci/src:${CI_PROJECT_DIR}/gitlab-ci/src/dependencies"
   artifacts:

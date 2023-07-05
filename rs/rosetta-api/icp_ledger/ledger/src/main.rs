@@ -3,7 +3,7 @@ use dfn_candid::{candid, candid_one, CandidOne};
 #[allow(unused_imports)]
 use dfn_core::BytesS;
 use dfn_core::{
-    api::{caller, data_certificate, print, set_certified_data, trap_with},
+    api::{caller, data_certificate, print, set_certified_data, time_nanos, trap_with},
     over, over_async, over_async_may_reject, over_init, printer, setup, stable,
 };
 use dfn_protobuf::protobuf;
@@ -24,11 +24,12 @@ use ic_ledger_core::{
 };
 use icp_ledger::{
     protobuf, tokens_into_proto, AccountBalanceArgs, AccountIdentifier, ArchiveInfo,
-    ArchivedBlocksRange, Archives, BinaryAccountBalanceArgs, Block, BlockArg, BlockRes,
-    CandidBlock, Decimals, GetBlocksArgs, InitArgs, IterBlocksArgs, LedgerCanisterPayload, Memo,
-    Name, Operation, PaymentError, QueryArchiveFn, QueryBlocksResponse, SendArgs, Subaccount,
-    Symbol, TipOfChainRes, TotalSupplyArgs, Transaction, TransferArgs, TransferError, TransferFee,
-    TransferFeeArgs, MAX_BLOCKS_PER_REQUEST,
+    ArchivedBlocksRange, ArchivedEncodedBlocksRange, Archives, BinaryAccountBalanceArgs, Block,
+    BlockArg, BlockRes, CandidBlock, Decimals, GetBlocksArgs, InitArgs, IterBlocksArgs,
+    LedgerCanisterPayload, Memo, Name, Operation, PaymentError, QueryBlocksResponse,
+    QueryEncodedBlocksResponse, SendArgs, Subaccount, Symbol, TipOfChainRes, TotalSupplyArgs,
+    Transaction, TransferArgs, TransferError, TransferFee, TransferFeeArgs, MAX_BLOCKS_PER_REQUEST,
+    MEMO_SIZE_BYTES,
 };
 use icrc_ledger_types::icrc::generic_metadata_value::MetadataValue as Value;
 use icrc_ledger_types::icrc1::account::Account;
@@ -238,7 +239,7 @@ async fn icrc1_send(
         .unwrap()
         .minting_account_id
         .expect("Minting canister id not initialized");
-    let now = TimeStamp::from_nanos_since_unix_epoch(ic_cdk::api::time());
+    let now = TimeStamp::from_nanos_since_unix_epoch(time_nanos());
     let (operation, effective_fee) = if to == minting_acc {
         if fee.is_some() && fee.as_ref() != Some(&Nat::from(0u64)) {
             return Err(icrc_ledger_types::icrc1::transfer::TransferError::BadFee {
@@ -293,7 +294,14 @@ async fn icrc1_send(
             created_at_time,
         };
         let (block_index, hash) = apply_transaction(&mut *ledger, tx, now, effective_fee)
-            .map_err(convert_transfer_error)?;
+            .map_err(convert_transfer_error)
+            .map_err(|err| {
+                let err: icrc_ledger_types::icrc1::transfer::TransferError = match err.try_into() {
+                    Ok(err) => err,
+                    Err(err) => trap_with(&err),
+                };
+                err
+            })?;
 
         set_certified_data(&hash.into_bytes());
 
@@ -632,7 +640,7 @@ fn canister_init(arg: LedgerCanisterPayload) {
             arg.token_name,
         ),
         LedgerCanisterPayload::Upgrade(_) => {
-            ic_cdk::trap("Cannot initialize the canister with an Upgrade argument. Please provide an Init argument.");
+            trap_with("Cannot initialize the canister with an Upgrade argument. Please provide an Init argument.");
         }
     }
 }
@@ -662,7 +670,7 @@ fn main() {
                         arg.token_name,
                     ),
                     Err(old_err) =>
-                        ic_cdk::trap(&format!("Unable to decode init argument.\nDecode as new init returned the error {}\nDecode as old init returned the error {}", new_err, old_err))
+                    trap_with(&format!("Unable to decode init argument.\nDecode as new init returned the error {}\nDecode as old init returned the error {}", new_err, old_err))
                 }
             }
         }
@@ -676,7 +684,7 @@ fn post_upgrade(args: Option<LedgerCanisterPayload>) {
 
     if let Some(args) = args {
         match args {
-            LedgerCanisterPayload::Init(_) => ic_cdk::trap("Cannot upgrade the canister with an Init argument. Please provide an Upgrade argument."),
+            LedgerCanisterPayload::Init(_) => trap_with("Cannot upgrade the canister with an Init argument. Please provide an Upgrade argument."),
             LedgerCanisterPayload::Upgrade(upgrade_args) => {
                 if let Some(upgrade_args) = upgrade_args {
                     ledger.upgrade(upgrade_args);
@@ -745,7 +753,6 @@ fn send_() {
                 .await
                 .unwrap_or_else(|e| {
                     trap_with(&e.to_string());
-                    unreachable!()
                 })
         },
     );
@@ -799,7 +806,6 @@ fn notify_() {
 async fn transfer_candid(arg: TransferArgs) -> Result<BlockIndex, TransferError> {
     let to_account = AccountIdentifier::from_address(arg.to).unwrap_or_else(|e| {
         trap_with(&format!("Invalid account identifier: {}", e));
-        unreachable!()
     });
     send(
         arg.memo,
@@ -818,8 +824,12 @@ async fn icrc1_transfer(
 ) -> Result<Nat, icrc_ledger_types::icrc1::transfer::TransferError> {
     let to = AccountIdentifier::from(arg.to);
     let from_account = Account {
-        owner: ic_cdk::api::caller(),
+        owner: caller().into(),
         subaccount: arg.from_subaccount,
+    };
+    match arg.memo.as_ref() {
+        Some(memo) if memo.0.len() > MEMO_SIZE_BYTES => trap_with("the memo field is too large"),
+        _ => {}
     };
     let amount = match arg.amount.0.to_u64() {
         Some(n) => Tokens::from_e8s(n),
@@ -934,7 +944,6 @@ fn account_balance_() {
 fn account_balance_candid_(arg: BinaryAccountBalanceArgs) -> Tokens {
     let account = AccountIdentifier::from_address(arg.account).unwrap_or_else(|e| {
         trap_with(&format!("Invalid account identifier: {}", e));
-        unreachable!()
     });
     account_balance(account)
 }
@@ -1065,10 +1074,10 @@ fn query_blocks(GetBlocksArgs { start, length }: GetBlocksArgs) -> QueryBlocksRe
         .map(|(canister_id, slice)| ArchivedBlocksRange {
             start: slice.start,
             length: range_utils::range_len(&slice),
-            callback: QueryArchiveFn {
-                canister_id,
-                method: "get_blocks".to_string(),
-            },
+            callback: icrc_ledger_types::icrc3::archive::QueryArchiveFn::new(
+                canister_id.into(),
+                "get_blocks".to_string(),
+            ),
         })
         .collect();
 
@@ -1207,6 +1216,46 @@ fn encode_metrics(w: &mut ic_metrics_encoder::MetricsEncoder<Vec<u8>>) -> std::i
 #[export_name = "canister_query http_request"]
 fn http_request() {
     dfn_http_metrics::serve_metrics(encode_metrics);
+}
+
+#[candid_method(query, rename = "query_encoded_blocks")]
+fn query_encoded_blocks(
+    GetBlocksArgs { start, length }: GetBlocksArgs,
+) -> QueryEncodedBlocksResponse {
+    let ledger = LEDGER.read().unwrap();
+    let locations = block_locations(&*ledger, start, length);
+
+    let local_blocks = range_utils::take(&locations.local_blocks, MAX_BLOCKS_PER_REQUEST);
+
+    let blocks = ledger.blockchain.block_slice(local_blocks.clone()).to_vec();
+
+    let archived_blocks = locations
+        .archived_blocks
+        .into_iter()
+        .map(|(canister_id, slice)| ArchivedEncodedBlocksRange {
+            start: slice.start,
+            length: range_utils::range_len(&slice),
+            callback: icrc_ledger_types::icrc3::archive::QueryArchiveFn::new(
+                canister_id.into(),
+                "get_encoded_blocks".to_string(),
+            ),
+        })
+        .collect();
+
+    let chain_length = ledger.blockchain.chain_length();
+
+    QueryEncodedBlocksResponse {
+        chain_length,
+        certificate: dfn_core::api::data_certificate().map(serde_bytes::ByteBuf::from),
+        blocks,
+        first_block_index: local_blocks.start as BlockIndex,
+        archived_blocks,
+    }
+}
+
+#[export_name = "canister_query query_encoded_blocks"]
+fn query_encoded_blocks_() {
+    over(candid_one, query_encoded_blocks)
 }
 
 candid::export_service!();

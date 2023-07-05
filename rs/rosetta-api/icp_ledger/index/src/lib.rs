@@ -35,6 +35,7 @@ pub struct TransactionWithId {
 
 #[derive(CandidType, Debug, Deserialize, PartialEq, Eq)]
 pub struct GetAccountIdentifierTransactionsResponse {
+    pub balance: u64,
     pub transactions: Vec<TransactionWithId>,
     // The txid of the oldest transaction the account_identifier has
     pub oldest_tx_id: Option<BlockIndex>,
@@ -47,3 +48,8 @@ pub struct GetAccountIdentifierTransactionsError {
 
 pub type GetAccountIdentifierTransactionsResult =
     Result<GetAccountIdentifierTransactionsResponse, GetAccountIdentifierTransactionsError>;
+
+#[derive(CandidType, Debug, Deserialize, PartialEq, Eq)]
+pub struct Status {
+    pub num_blocks_synced: BlockIndex,
+}

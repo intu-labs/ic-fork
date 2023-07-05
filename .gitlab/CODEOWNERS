@@ -65,8 +65,7 @@ go_deps.bzl               @dfinity-lab/teams/idx
 /gitlab-ci/src/gen_gitlab_cargo_pipeline/farm_rate_limit.py             @dfinity-lab/teams/idx @dfinity-lab/teams/ic-testing-verification
 /gitlab-ci/config/00--benchmark-test-child-pipeline.yml                 @dfinity-lab/teams/runtime-owners
 /gitlab-ci/config/60--benchmark-test--spawn-benchmark-pipeline.yml      @dfinity-lab/teams/runtime-owners
-/gitlab-ci/config/46--rosetta-release.yml                               @dfinity-lab/teams/financial-integrations
-/gitlab-ci/config/46--rosetta-api-docker-image.yml                      @dfinity-lab/teams/financial-integrations
+/gitlab-ci/config/rosetta.yml                                           @dfinity-lab/teams/financial-integrations
 
 # [Typescript]
 /typescript/                 @dfinity-lab/teams/owners-owners
@@ -138,7 +137,6 @@ go_deps.bzl               @dfinity-lab/teams/idx
 /rs/interfaces/                         @dfinity-lab/teams/interface-owners
 /rs/interfaces/adapter_client/		@dfinity-lab/teams/networking-team
 /rs/interfaces/certified_stream_store/  @dfinity-lab/teams/message-routing-owners
-/rs/interfaces/p2p/                     @dfinity-lab/teams/networking-team
 /rs/interfaces/registry/                @dfinity-lab/teams/nns-team
 /rs/interfaces/src/artifact_manager.rs  @dfinity-lab/teams/networking-team
 /rs/interfaces/src/artifact_pool.rs     @dfinity-lab/teams/networking-team
@@ -150,6 +148,7 @@ go_deps.bzl               @dfinity-lab/teams/idx
 /rs/interfaces/src/dkg.rs               @dfinity-lab/teams/consensus-owners
 /rs/interfaces/src/execution_environment.rs    @dfinity-lab/teams/execution-owners @dfinity-lab/teams/runtime-owners
 /rs/interfaces/src/messaging.rs         @dfinity-lab/teams/message-routing-owners
+/rs/interfaces/src/state_sync_client.rs @dfinity-lab/teams/message-routing-owners @dfinity-lab/teams/networking-team
 /rs/interfaces/state_manager/           @dfinity-lab/teams/message-routing-owners
 /rs/interfaces/transport/               @dfinity-lab/teams/networking-team
 /rs/log_analyzer/                       @dfinity-lab/teams/ic-testing-verification
@@ -158,6 +157,7 @@ go_deps.bzl               @dfinity-lab/teams/idx
 /rs/monitoring/adapter_metrics/         @dfinity-lab/teams/networking-team
 /rs/monitoring/adapter_metrics_server/  @dfinity-lab/teams/networking-team
 /rs/monitoring/adapter_metrics_service/  @dfinity-lab/teams/networking-team
+/rs/monitoring/backtrace/               @dfinity-lab/teams/message-routing-owners @dfinity-lab/teams/networking-team
 /rs/monitoring/onchain_observability/   @dfinity-lab/teams/networking-team
 /rs/nervous_system/                     @dfinity-lab/teams/nns-team
 /rs/nns/                                @dfinity-lab/teams/nns-team

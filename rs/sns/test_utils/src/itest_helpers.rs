@@ -148,10 +148,12 @@ impl SnsTestsInitPayloadBuilder {
             metadata: vec![],
             fee_collector_account: None,
             max_memo_length: None,
+            feature_flags: None,
         };
 
         let swap = SwapInit {
             fallback_controller_principal_ids: vec![PrincipalId::new_user_test_id(6360).to_string()],
+            should_auto_finalize: Some(true),
             ..Default::default()
         };
 

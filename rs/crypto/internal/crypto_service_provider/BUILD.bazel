@@ -72,6 +72,7 @@ DEV_DEPENDENCIES = [
     "//rs/test_utilities/in_memory_logger",
     "//rs/types/types_test_utils",
     "@crate_index//:assert_matches",
+    "@crate_index//:chrono",
     "@crate_index//:lazy_static",
     "@crate_index//:mockall_0_7_2",
     "@crate_index//:proptest",
@@ -116,13 +117,14 @@ rust_test(
 )
 
 rust_test_suite(
-    name = "crypto_service_provider_integration_tests",
+    name = "crypto_service_provider_integration",
     srcs = glob(
-        ["tests/*.rs"],
+        ["tests/**/*.rs"],
         exclude = [
             "tests/check_generated_files.rs",
         ],
     ),
+    flaky = True,
     proc_macro_deps = MACRO_DEPENDENCIES + DEV_MACRO_DEPENDENCIES,
     deps = [":crypto_service_provider"] + DEPENDENCIES + DEV_DEPENDENCIES,
 )

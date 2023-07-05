@@ -1,8 +1,8 @@
 use crate::canister_id_record::CanisterIdRecord;
 use candid::{CandidType, Deserialize};
-use dfn_core::api::call;
 use ic_base_types::{CanisterId, NumBytes, PrincipalId};
 use ic_ic00_types::IC_00;
+use ic_nervous_system_runtime::Runtime;
 use num_traits::cast::ToPrimitive;
 
 impl TryFrom<PrincipalId> for CanisterIdRecord {
@@ -63,6 +63,7 @@ pub struct CanisterStatusResult {
     pub module_hash: Option<Vec<u8>>,
     pub memory_size: candid::Nat,
     pub settings: DefiniteCanisterSettings,
+    pub cycles: candid::Nat,
 }
 
 /// Copy-paste of ic-types::ic_00::CanisterStatusResult.
@@ -92,13 +93,25 @@ pub struct DefiniteCanisterSettingsFromManagementCanister {
 
 impl From<CanisterStatusResultFromManagementCanister> for CanisterStatusResult {
     fn from(value: CanisterStatusResultFromManagementCanister) -> Self {
+        let CanisterStatusResultFromManagementCanister {
+            status,
+            module_hash,
+            memory_size,
+            settings,
+            cycles,
+
+            // Ignored.
+            idle_cycles_burned_per_day: _,
+        } = value;
+
         CanisterStatusResult {
-            status: value.status,
-            module_hash: value.module_hash,
-            memory_size: value.memory_size,
+            status,
+            module_hash,
+            memory_size,
             settings: DefiniteCanisterSettings {
-                controllers: value.settings.controllers,
+                controllers: settings.controllers,
             },
+            cycles,
         }
     }
 }
@@ -127,16 +140,15 @@ impl CanisterStatusResultFromManagementCanister {
     }
 }
 
-pub async fn canister_status(
+pub async fn canister_status<Rt>(
     canister_id_record: CanisterIdRecord,
-) -> Result<CanisterStatusResultFromManagementCanister, (Option<i32>, String)> {
-    call(
-        IC_00,
-        "canister_status",
-        dfn_candid::candid::<CanisterStatusResultFromManagementCanister, (CanisterIdRecord,)>,
-        (canister_id_record,),
-    )
-    .await
+) -> Result<CanisterStatusResultFromManagementCanister, (i32, String)>
+where
+    Rt: Runtime,
+{
+    Rt::call_with_cleanup(IC_00, "canister_status", (canister_id_record,))
+        .await
+        .map(|response: (CanisterStatusResultFromManagementCanister,)| response.0)
 }
 
 /// Copy-and-paste of types from ic00_types, without deprecated fields.
@@ -330,6 +342,7 @@ mod tests {
             settings: DefiniteCanisterSettings {
                 controllers: vec![test_principal],
             },
+            cycles: candid::Nat::from(100),
         };
 
         let actual_canister_status_result = CanisterStatusResult::from(m);

@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use candid::{Decode, Encode};
 use futures::future::FutureExt;
 use ic_base_types::{CanisterId, PrincipalId};
+use ic_ledger_core::tokens::CheckedSub;
 use ic_nervous_system_common::{cmc::CMC, ledger::IcpLedger, NervousSystemError};
 use ic_nns_common::{
     pb::v1::{NeuronId, ProposalId},
@@ -150,9 +151,9 @@ impl FakeDriver {
             let accounts = &mut self.state.lock().unwrap().accounts;
             let minting = accounts.entry(FakeDriver::minting_account()).or_default();
             assert!(old_supply >= Tokens::from_e8s(*minting));
-            let old_in_use = (old_supply - Tokens::from_e8s(*minting)).unwrap();
+            let old_in_use = old_supply.checked_sub(&Tokens::from_e8s(*minting)).unwrap();
             assert!(supply >= old_in_use);
-            *minting = (supply - old_in_use).unwrap().get_e8s();
+            *minting = supply.checked_sub(&old_in_use).unwrap().get_e8s();
         }
         self
     }
@@ -374,6 +375,19 @@ impl Environment for FakeDriver {
                         neuron_minimum_stake_e8s: Some(123_456_789),
                         confirmation_text: None,
                         restricted_countries: None,
+
+                        min_participants: None,             // TODO[NNS1-2339]
+                        min_icp_e8s: None,                  // TODO[NNS1-2339]
+                        max_icp_e8s: None,                  // TODO[NNS1-2339]
+                        min_participant_icp_e8s: None,      // TODO[NNS1-2339]
+                        max_participant_icp_e8s: None,      // TODO[NNS1-2339]
+                        swap_start_timestamp_seconds: None, // TODO[NNS1-2339]
+                        swap_due_timestamp_seconds: None,   // TODO[NNS1-2339]
+                        sns_token_e8s: None,                // TODO[NNS1-2339]
+                        neuron_basket_construction_parameters: None, // TODO[NNS1-2339]
+                        nns_proposal_id: None,              // TODO[NNS1-2339]
+                        neurons_fund_participants: None,    // TODO[NNS1-2339]
+                        should_auto_finalize: Some(true),
                     }),
                     ..Default::default() // Not realistic, but sufficient for tests.
                 }),

@@ -9,8 +9,13 @@ use url::Url;
 use std::path::PathBuf;
 
 mod admin_helper;
+mod agent_helper;
+mod layout;
+mod state_tool_helper;
 mod steps;
 mod subnet_splitting;
+mod target_subnet;
+mod utils;
 
 #[derive(Parser)]
 #[clap(version = "1.0")]
@@ -63,6 +68,7 @@ fn subnet_splitting(
         recovery_args,
         neuron_args,
         subnet_splitting_args,
+        /*interactive=*/ true,
     );
 
     cli::execute_steps(&logger, subnet_splitting);

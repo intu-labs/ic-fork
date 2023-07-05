@@ -1,7 +1,7 @@
 //! Command-line utility to help submitting proposals to modify the IC's NNS.
 use anyhow::anyhow;
 use async_trait::async_trait;
-use candid::{CandidType, Decode, Encode};
+use candid::{CandidType, Decode, Encode, Principal};
 use clap::Parser;
 use cycles_minting_canister::{
     ChangeSubnetTypeAssignmentArgs, SetAuthorizedSubnetworkListArgs, SubnetListWithType,
@@ -52,7 +52,7 @@ use ic_nns_governance::{
         AddOrRemoveNodeProvider, CreateServiceNervousSystem, GovernanceError, ManageNeuron,
         NnsFunction, NodeProvider, OpenSnsTokenSwap, Proposal, RewardNodeProviders,
     },
-    proposal_submission::{
+    proposals::proposal_submission::{
         create_external_update_proposal_candid, create_make_proposal_payload,
         decode_make_proposal_response,
     },
@@ -107,7 +107,7 @@ use ic_registry_subnet_features::{EcdsaConfig, SubnetFeatures, DEFAULT_ECDSA_MAX
 use ic_registry_subnet_type::SubnetType;
 use ic_registry_transport::Error;
 use ic_sns_init::pb::v1::SnsInitPayload; // To validate CreateServiceNervousSystem.
-use ic_sns_swap::pb::v1::params::NeuronBasketConstructionParameters;
+use ic_sns_swap::pb::v1::NeuronBasketConstructionParameters;
 use ic_sns_wasm::pb::v1::{
     AddWasmRequest, InsertUpgradePathEntriesRequest, PrettySnsVersion, SnsCanisterType, SnsUpgrade,
     SnsVersion, SnsWasm, UpdateAllowedPrincipalsRequest, UpdateSnsSubnetListRequest,
@@ -3678,6 +3678,9 @@ struct ProposeToSetBitcoinConfig {
 
     #[clap(long, help = "Enables/disables access to the Bitcoin canister's API.")]
     pub api_access: Option<bool>,
+
+    #[clap(long, help = "Sets/clears the watchdog canister principal.")]
+    pub watchdog_canister: Option<Option<PrincipalId>>,
 }
 
 impl ProposalTitle for ProposeToSetBitcoinConfig {
@@ -3703,6 +3706,9 @@ impl ProposalPayload<BitcoinSetConfigProposal> for ProposeToSetBitcoinConfig {
             api_access: self
                 .api_access
                 .map(|flag| if flag { Flag::Enabled } else { Flag::Disabled }),
+            watchdog_canister: self
+                .watchdog_canister
+                .map(|principal_id| principal_id.map(Principal::from)),
             ..Default::default()
         };
 
@@ -3789,7 +3795,7 @@ struct ProposeToCreateServiceNervousSystemCmd {
     swap_neuron_dissolve_delay: nervous_system_pb::Duration,
 
     #[clap(long, value_parser=parse_time_of_day)]
-    swap_start_time: nervous_system_pb::GlobalTimeOfDay,
+    swap_start_time: Option<nervous_system_pb::GlobalTimeOfDay>,
 
     #[clap(long, value_parser=parse_duration)]
     swap_duration: nervous_system_pb::Duration,
@@ -3999,7 +4005,7 @@ impl TryFrom<ProposeToCreateServiceNervousSystemCmd> for CreateServiceNervousSys
             let maximum_icp = Some(swap_maximum_icp);
             let minimum_participant_icp = Some(swap_minimum_participant_icp);
             let maximum_participant_icp = Some(swap_maximum_participant_icp);
-            let start_time = Some(swap_start_time);
+            let start_time = swap_start_time;
             let duration = Some(swap_duration);
 
             let neuron_basket_construction_parameters = {
@@ -4339,6 +4345,7 @@ async fn main() {
             SubCommand::ProposeToAddHostOsVersion(_) => (),
             SubCommand::ProposeToManageHostOsVersion(_) => (),
             SubCommand::ProposeToCreateServiceNervousSystem(_) => (),
+            SubCommand::ProposeToSetBitcoinConfig(_) => (),
             _ => panic!(
                 "Specifying a secret key or HSM is only supported for \
                      methods that interact with NNS handlers."

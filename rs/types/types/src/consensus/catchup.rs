@@ -28,7 +28,7 @@ pub type CatchUpContent = CatchUpContentT<HashedBlock>;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, PartialOrd, Ord, Hash)]
 pub struct CatchUpContentT<T> {
     /// Replica version that was running when this CUP was created.
-    version: ReplicaVersion,
+    pub version: ReplicaVersion,
     /// A finalized Block that contains DKG summary.
     pub block: T,
     /// The RandomBeacon that is used at the catchup height.
@@ -144,6 +144,14 @@ impl<T> HasCommittee for CatchUpContentT<T> {
 /// CatchUpPackage is signed by a threshold public key. Its CatchUpContent is
 /// only trusted if the threshold public key is trusted.
 pub type CatchUpPackage = Signed<CatchUpContent, ThresholdSignature<CatchUpContent>>;
+
+impl CatchUpPackage {
+    /// Return if this CUP is unsigned. This is true for
+    /// Genesis or recovery CUPs.
+    pub fn is_unsigned(&self) -> bool {
+        self.signature.signature.as_ref().0.is_empty()
+    }
+}
 
 /// CatchUpContentHash is the type of a hashed `CatchUpContent`
 pub type CatchUpContentHash = CryptoHashOf<CatchUpContent>;

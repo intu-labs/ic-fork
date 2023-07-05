@@ -3,7 +3,7 @@ use crate::{
         test_env::TestEnv,
         test_env_api::{
             HasDependencies, HasPublicApiUrl, HasTopologySnapshot, IcNodeContainer, IcNodeSnapshot,
-            NnsInstallationExt, SubnetSnapshot,
+            NnsInstallationBuilder, SubnetSnapshot,
         },
     },
     icrc1_agent_test::install_icrc1_ledger,
@@ -17,7 +17,7 @@ use candid::Encode;
 use canister_test::{ic00::EcdsaKeyId, Canister, Runtime};
 use dfn_candid::candid;
 use ic_base_types::{CanisterId, PrincipalId, SubnetId};
-use ic_btc_interface::{Config, Fees, Flag, Network, NetworkSnakeCase};
+use ic_btc_interface::{Config, Fees, Flag, Network};
 use ic_canister_client::Sender;
 use ic_cdk::export::Principal;
 use ic_ckbtc_kyt::{
@@ -25,6 +25,7 @@ use ic_ckbtc_kyt::{
 };
 use ic_ckbtc_minter::lifecycle::init::MinterArg;
 use ic_ckbtc_minter::lifecycle::init::{InitArgs as CkbtcMinterInitArgs, Mode};
+use ic_ckbtc_minter::CKBTC_LEDGER_MEMO_SIZE;
 use ic_config::{
     execution_environment::{BITCOIN_MAINNET_CANISTER_ID, BITCOIN_TESTNET_CANISTER_ID},
     subnet_config::ECDSA_SIGNATURE_FEE,
@@ -84,8 +85,9 @@ pub fn install_nns_canisters_at_ids(env: &TestEnv) {
         .nodes()
         .next()
         .expect("there is no NNS node");
-    nns_node
-        .install_nns_canisters_at_ids(None)
+    NnsInstallationBuilder::new()
+        .at_ids()
+        .install(&nns_node, env)
         .expect("NNS canisters not installed");
     info!(&env.logger(), "NNS canisters installed");
 }
@@ -280,7 +282,8 @@ pub(crate) async fn install_ledger(
             max_transactions_per_response: None,
         },
         fee_collector_account: None,
-        max_memo_length: None,
+        max_memo_length: Some(CKBTC_LEDGER_MEMO_SIZE),
+        feature_flags: None,
     });
     install_icrc1_ledger(env, canister, &init_args).await;
     canister.canister_id()
@@ -296,7 +299,7 @@ pub(crate) async fn install_minter(
 ) -> CanisterId {
     info!(&logger, "Installing minter ...");
     let args = CkbtcMinterInitArgs {
-        btc_network: Network::Regtest,
+        btc_network: Network::Regtest.into(),
         /// The name of the [EcdsaKeyId]. Use "dfx_test_key" for local replica and "test_key_1" for
         /// a testing key for testnet and mainnet
         ecdsa_key_name: TEST_KEY_LOCAL.parse().unwrap(),
@@ -376,19 +379,19 @@ pub(crate) async fn install_bitcoin_canister(
     logger: &Logger,
     env: &TestEnv,
 ) -> CanisterId {
-    install_bitcoin_canister_with_network(runtime, logger, env, NetworkSnakeCase::Regtest).await
+    install_bitcoin_canister_with_network(runtime, logger, env, Network::Regtest).await
 }
 
 pub(crate) async fn install_bitcoin_canister_with_network(
     runtime: &Runtime,
     logger: &Logger,
     env: &TestEnv,
-    network: NetworkSnakeCase,
+    network: Network,
 ) -> CanisterId {
     info!(&logger, "Installing bitcoin canister ...");
     let canister_id = match network {
-        NetworkSnakeCase::Mainnet => BITCOIN_MAINNET_CANISTER_ID,
-        NetworkSnakeCase::Regtest | NetworkSnakeCase::Testnet => BITCOIN_TESTNET_CANISTER_ID,
+        Network::Mainnet => BITCOIN_MAINNET_CANISTER_ID,
+        Network::Regtest | Network::Testnet => BITCOIN_TESTNET_CANISTER_ID,
     };
     let mut bitcoin_canister =
         create_canister_at_id(runtime, PrincipalId::from_str(canister_id).unwrap()).await;
@@ -410,6 +413,8 @@ pub(crate) async fn install_bitcoin_canister_with_network(
             send_transaction_per_byte: 0,
         },
         api_access: Flag::Enabled,
+        disable_api_if_not_fully_synced: Flag::Disabled,
+        watchdog_canister: None,
     };
 
     install_rust_canister_from_path(

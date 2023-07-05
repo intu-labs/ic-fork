@@ -33,11 +33,13 @@ fn main() -> Result<()> {
 
     info!(log, "Starting mercury ...");
     let mercury_dir = cli_args.targets_dir.join("mercury");
+    let nns_url = vec![cli_args.nns_url];
     rt.block_on(sync_local_registry(
         log.clone(),
         mercury_dir,
-        cli_args.nns_url,
+        nns_url,
         cli_args.skip_sync,
+        None,
     ));
 
     info!(log, "Starting IcServiceDiscovery ...");
@@ -75,6 +77,7 @@ fn main() -> Result<()> {
         cli_args.poll_interval,
         metrics.clone(),
         Some(update_signal_sender),
+        1,
     );
 
     info!(
@@ -110,11 +113,13 @@ fn main() -> Result<()> {
 
     rt.block_on(shutdown_signal);
 
-    for handle in handles {
+    for _ in &handles {
         stop_signal_sender.send(())?;
-        handle.join().expect("Join failed");
     }
 
+    for handle in handles {
+        handle.join().expect("Join failed");
+    }
     Ok(())
 }
 

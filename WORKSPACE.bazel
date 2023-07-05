@@ -1,6 +1,5 @@
 workspace(
     name = "ic",
-    managed_directories = {"@sw_npm": ["node_modules"]},
 )
 
 load("//third_party/lmdb-0.9.70:repository.bzl", "lmdb_repository")
@@ -142,10 +141,10 @@ rules_motoko_dependencies()
 # Support for constructing archives
 http_archive(
     name = "rules_pkg",
-    sha256 = "451e08a4d78988c06fa3f9306ec813b836b1d076d0f055595444ba4ff22b867f",
+    sha256 = "8f9ee2dc10c1ae514ee599a8b42ed99fa262b757058f65ad3c384289ff70c4b8",
     urls = [
-        "https://mirror.bazel.build/github.com/bazelbuild/rules_pkg/releases/download/0.7.1/rules_pkg-0.7.1.tar.gz",
-        "https://github.com/bazelbuild/rules_pkg/releases/download/0.7.1/rules_pkg-0.7.1.tar.gz",
+        "https://mirror.bazel.build/github.com/bazelbuild/rules_pkg/releases/download/0.9.1/rules_pkg-0.9.1.tar.gz",
+        "https://github.com/bazelbuild/rules_pkg/releases/download/0.9.1/rules_pkg-0.9.1.tar.gz",
     ],
 )
 
@@ -182,6 +181,12 @@ openssl_repositories()
 load("//third_party/openssl:openssl_setup.bzl", "openssl_setup")
 
 openssl_setup()
+
+# Bitcoin core
+
+load("//third_party/bitcoin-core:bitcoin-core_repository.bzl", "bitcoin_core_repository")
+
+bitcoin_core_repository()
 
 container_repositories()
 
@@ -331,8 +336,8 @@ rosetta_cli_repository(name = "rosetta-cli")
 
 http_archive(
     name = "build_bazel_rules_nodejs",
-    sha256 = "f10a3a12894fc3c9bf578ee5a5691769f6805c4be84359681a785a0c12e8d2b6",
-    urls = ["https://github.com/bazelbuild/rules_nodejs/releases/download/5.5.3/rules_nodejs-5.5.3.tar.gz"],
+    sha256 = "5dd1e5dea1322174c57d3ca7b899da381d516220793d0adef3ba03b9d23baa8e",
+    urls = ["https://github.com/bazelbuild/rules_nodejs/releases/download/5.8.3/rules_nodejs-5.8.3.tar.gz"],
 )
 
 load("@build_bazel_rules_nodejs//:repositories.bzl", "build_bazel_rules_nodejs_dependencies")
@@ -435,10 +440,11 @@ http_archive(
     name = "ic-hs",
     build_file_content = """
 package(default_visibility = ["//visibility:public"])
-filegroup(name = "artifacts", srcs = glob(["build/*", "test-data/*"]), visibility = ["//visibility:public"])
+filegroup(name = "artifacts", srcs = glob(["build/*"]), visibility = ["//visibility:public"])
+exports_files(["test-data"])
       """,
-    sha256 = "daca2dd0f0d8a615c43b70e69bf08919a42e4ff324d7311751897b4f0b8d7000",
-    urls = ["https://download.dfinity.systems/ic-ref/ic-ref-test-0.0.1-189b3a3c-x86_64-linux.tar.gz"],
+    sha256 = "2ebb806022b85c9aa67f61dd489ced8d2d9462b2a7debc748724643c2772cd03",
+    urls = ["https://download.dfinity.systems/ic-ref/ic-ref-test-0.0.1-f802ac37-x86_64-linux.tar.gz"],
 )
 
 # Deployed NNS canisters
@@ -460,8 +466,8 @@ http_file(
 http_file(
     name = "mainnet_icp_ledger_canister",
     downloaded_file_path = "ledger-canister_notify-method.wasm.gz",
-    sha256 = "900e30c4bf3293244cd4649e8470ece822e18723e9a942decabc32d46257b514",
-    url = "https://download.dfinity.systems/ic/f02cc38677905e24a9016637fddc697039930808/canisters/ledger-canister_notify-method.wasm.gz",
+    sha256 = "cb16acc20a8948b68cc40b7d7328a53ec36c3cf713b3111921b49d009b98c5a5",
+    url = "https://download.dfinity.systems/ic/c63b73baa88d65a45a60f4d7e0ec043f1fbf98be/canisters/ledger-canister_notify-method.wasm.gz",
 )
 
 # From https://dashboard.internetcomputer.org/proposal/44955
@@ -469,8 +475,8 @@ http_file(
 http_file(
     name = "mainnet_icp_ledger-archive-node-canister",
     downloaded_file_path = "ledger-archive-node-canister.wasm.gz",
-    sha256 = "a88d0b6a327361208a48dd8dab5b7f47f8e1ed0f3c2aca6b6ad383187520ff67",
-    url = "https://download.dfinity.systems/ic/1b98a5d984176b1c948d0cb92227d88ad5ee8044/canisters/ledger-archive-node-canister.wasm.gz",
+    sha256 = "569d498b638668733953a756f4a417533e1f513d1d41d55960abcd2f160d2aad",
+    url = "https://download.dfinity.systems/ic/acd7e2928237a8e8bc1aa5e73efd47c8a8dfb556/canisters/ledger-archive-node-canister.wasm.gz",
 )
 
 http_file(
@@ -483,9 +489,8 @@ http_file(
 http_file(
     name = "mainnet_nns_lifeline_canister",
     downloaded_file_path = "lifeline-canister.wasm.gz",
-    sha256 = "2cce2f281c86325988528624dc9375272ecd2adc96e1021e41d08943a6e9e5a1",
-    # TODO: change to https://download.dfinity.systems/ic/9a1f70d6e1b03ef27e86f8094ee48b83846e482d/canisters/lifeline_canister.wasm.gz after the next lifeline canister release.
-    url = "https://download.dfinity.systems/ic/9a1f70d6e1b03ef27e86f8094ee48b83846e482d/canisters/lifeline.wasm.gz",
+    sha256 = "775303f6b99530db496117df1edfa1e24153a161895c56e79d4e39daae36e28b",
+    url = "https://download.dfinity.systems/ic/e4a9c0aa4ef24f7ee5bb9d27ce930551a7c5e24d/canisters/lifeline_canister.wasm.gz",
 )
 
 http_file(
@@ -500,8 +505,8 @@ http_file(
 http_file(
     name = "mainnet_nns_cycles-minting-canister",
     downloaded_file_path = "cycles-minting-canister.wasm.gz",
-    sha256 = "d9b64cbf4fbc05d4f6a7128a5d116a4b3d22706109461bed9385961234443cb8",
-    url = "https://download.dfinity.systems/ic/18dc31ca64a4ead42c5d4222e647dce7124eb90e/canisters/cycles-minting-canister.wasm.gz",
+    sha256 = "fc1655302a81cd1b7148a6f66479b2830bd0d567d04780720e7bdd6c5b124fb5",
+    url = "https://download.dfinity.systems/ic/e813c43a337a26c026c2f2ec19099bd2036e7280/canisters/cycles-minting-canister.wasm.gz",
 )
 
 http_file(
@@ -566,8 +571,8 @@ http_file(
 http_file(
     name = "btc_canister",
     downloaded_file_path = "ic-btc-canister.wasm.gz",
-    sha256 = "c4153339cc3d23eae8f5e5a9c3872df5e5713913357e11d493bc5d06f257fb47",
-    url = "https://github.com/dfinity/bitcoin-canister/releases/download/release%2F2023-03-31/ic-btc-canister.wasm.gz",
+    sha256 = "8cc43d3f40bb734a0c87f42ae19eee70c360f2d66a0c88c631f0f0e785505133",
+    url = "https://github.com/dfinity/bitcoin-canister/releases/download/release%2F2023-06-12/ic-btc-canister.wasm.gz",
 )
 
 # Internet Identity canister (test build)

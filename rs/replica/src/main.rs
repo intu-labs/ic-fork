@@ -59,6 +59,12 @@ fn main() -> io::Result<()> {
     assert_eq_size!(usize, u64);
     // Ensure that the hardcoded constant matches the OS page size.
     assert_eq!(ic_sys::sysconf_page_size(), PAGE_SIZE);
+
+    // Produce a thread dump and exit if this is a child process created for this
+    // purpose.
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    ic_backtrace::init();
+
     // At this point we need to setup a new process group. This is
     // done to ensure all our children processes belong to the same
     // process group (as policy wise in production we restrict setpgid
@@ -94,8 +100,9 @@ fn main() -> io::Result<()> {
         .build()
         .unwrap();
 
+    let xnet_rt_worker_threads = std::cmp::max(num_cpus::get() / 4, 1);
     let rt_xnet = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(1)
+        .worker_threads(xnet_rt_worker_threads)
         .thread_name("XNet_Thread".to_string())
         .enable_all()
         .build()

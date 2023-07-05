@@ -18,7 +18,6 @@ use ic_interfaces_registry::RegistryClient;
 use ic_logger::{error, ReplicaLogger};
 use ic_replicated_state::{canister_state::execution_state::CustomSectionType, ReplicatedState};
 use ic_types::{
-    malicious_flags::MaliciousFlags,
     messages::{
         Blob, Certificate, CertificateDelegation, HttpReadStateContent, HttpReadStateResponse,
         HttpRequest, HttpRequestEnvelope, MessageId, ReadState, SignedRequestBytes,
@@ -43,9 +42,8 @@ pub(crate) struct ReadStateService {
     health_status: Arc<AtomicCell<ReplicaHealthStatus>>,
     delegation_from_nns: Arc<RwLock<Option<CertificateDelegation>>>,
     state_reader_executor: StateReaderExecutor,
-    validator_executor: ValidatorExecutor,
+    validator_executor: ValidatorExecutor<ReadState>,
     registry_client: Arc<dyn RegistryClient>,
-    malicious_flags: MaliciousFlags,
 }
 
 impl ReadStateService {
@@ -57,9 +55,8 @@ impl ReadStateService {
         health_status: Arc<AtomicCell<ReplicaHealthStatus>>,
         delegation_from_nns: Arc<RwLock<Option<CertificateDelegation>>>,
         state_reader_executor: StateReaderExecutor,
-        validator_executor: ValidatorExecutor,
+        validator_executor: ValidatorExecutor<ReadState>,
         registry_client: Arc<dyn RegistryClient>,
-        malicious_flags: MaliciousFlags,
     ) -> EndpointService {
         let base_service = Self {
             log,
@@ -69,7 +66,6 @@ impl ReadStateService {
             state_reader_executor,
             validator_executor,
             registry_client,
-            malicious_flags,
         };
         let base_service = BoxCloneService::new(
             ServiceBuilder::new()
@@ -155,34 +151,14 @@ impl Service<Request<Vec<u8>>> for ReadStateService {
                 return Box::pin(async move { Ok(res) });
             }
         };
-        // Collect requested path.
+
         let read_state = request.content().clone();
-        let mut paths: Vec<Path> = read_state.paths.clone();
-
-        // Always add "time" to the paths even if not explicitly requested.
-        paths.push(Path::from(Label::from("time")));
-
-        let labeled_tree = match sparse_labeled_tree_from_paths(&paths) {
-            Ok(tree) => tree,
-            Err(TooLongPathError {}) => {
-                let res = make_plaintext_response(
-                    StatusCode::BAD_REQUEST,
-                    "Failed to parse requested paths: path is too long.".to_string(),
-                );
-                return Box::pin(async move { Ok(res) });
-            }
-        };
         let registry_client = self.registry_client.get_latest_version();
-        let malicious_flags = self.malicious_flags.clone();
         let state_reader_executor = self.state_reader_executor.clone();
         let validator_executor = self.validator_executor.clone();
         let metrics = self.metrics.clone();
         Box::pin(async move {
-            let targets_fut = validator_executor.get_authorized_canisters(
-                request.clone(),
-                registry_client,
-                malicious_flags,
-            );
+            let targets_fut = validator_executor.validate_request(request.clone(), registry_client);
 
             let targets = match targets_fut.await {
                 Ok(targets) => targets,
@@ -204,6 +180,23 @@ impl Service<Request<Vec<u8>>> for ReadStateService {
             {
                 return Ok(make_plaintext_response(status, message));
             }
+
+            // Create labeled tree. This may be an expensive operation and by
+            // creating the labeled tree after verifying the paths we know that
+            // the depth is max 4.
+            // Always add "time" to the paths even if not explicitly requested.
+            let mut paths: Vec<Path> = read_state.paths;
+            paths.push(Path::from(Label::from("time")));
+            let labeled_tree = match sparse_labeled_tree_from_paths(&paths) {
+                Ok(tree) => tree,
+                Err(TooLongPathError) => {
+                    let res = make_plaintext_response(
+                        StatusCode::BAD_REQUEST,
+                        "Failed to parse requested paths: path is too long.".to_string(),
+                    );
+                    return Ok(res);
+                }
+            };
 
             let res = match state_reader_executor
                 .read_certified_state(&labeled_tree)
@@ -267,11 +260,7 @@ async fn verify_paths(
                 verify_canister_ids(&canister_id, &effective_canister_id)?;
                 metrics.read_state_canister_controller_total.inc();
             }
-            [b"canister", canister_id, b"controllers"] => {
-                let canister_id = parse_canister_id(canister_id)?;
-                verify_canister_ids(&canister_id, &effective_canister_id)?;
-            }
-            [b"canister", canister_id, b"module_hash"] => {
+            [b"canister", canister_id, b"controllers" | b"module_hash"] => {
                 let canister_id = parse_canister_id(canister_id)?;
                 verify_canister_ids(&canister_id, &effective_canister_id)?;
             }
@@ -288,9 +277,10 @@ async fn verify_paths(
                 can_read_canister_metadata(user, &canister_id, &name, &state)?
             }
             [b"subnet"] => {}
-            [b"subnet", _subnet_id, b"public_key"] => {}
-            [b"subnet", _subnet_id, b"canister_ranges"] => {}
-            [b"request_status", request_id] | [b"request_status", request_id, ..] => {
+            [b"subnet", _subnet_id, b"public_key" | b"canister_ranges"] => {}
+            [b"request_status", request_id]
+            | [b"request_status", request_id, b"status" | b"reply" | b"reject_code" | b"reject_message" | b"error_code"] =>
+            {
                 // Verify that the request was signed by the same user.
                 if let Ok(message_id) = MessageId::try_from(*request_id) {
                     if let Some(request_status_id) = request_status_id {
@@ -389,7 +379,7 @@ fn can_read_canister_metadata(
                 .get_custom_section(custom_section_name)
                 .ok_or_else(|| HttpError {
                     status: StatusCode::NOT_FOUND,
-                    message: format!("Custom section {} not found.", custom_section_name),
+                    message: format!("Custom section {:.100} not found.", custom_section_name),
                 })?;
 
             // Only the controller can request this custom section.
@@ -399,7 +389,7 @@ fn can_read_canister_metadata(
                 return Err(HttpError {
                     status: StatusCode::FORBIDDEN,
                     message: format!(
-                        "Custom section {} can only be requested by the controllers of the canister.",
+                        "Custom section {:.100} can only be requested by the controllers of the canister.",
                         custom_section_name
                     ),
                 });

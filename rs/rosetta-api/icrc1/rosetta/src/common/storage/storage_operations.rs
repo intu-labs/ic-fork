@@ -83,6 +83,8 @@ pub fn store_blocks(
                 amount,
                 None,
             ),
+            ic_icrc1::Operation::Approve { .. } => todo!(),
+            Operation::TransferFrom { .. } => todo!(),
         };
 
         match execute(

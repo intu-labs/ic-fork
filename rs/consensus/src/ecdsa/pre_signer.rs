@@ -1431,11 +1431,13 @@ impl TranscriptState {
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::ops::Deref;
 
     use super::*;
     use crate::ecdsa::utils::test_utils::*;
     use assert_matches::assert_matches;
     use ic_crypto_test_utils_canister_threshold_sigs::CanisterThresholdSigTestEnvironment;
+    use ic_crypto_test_utils_reproducible_rng::reproducible_rng;
     use ic_interfaces::artifact_pool::{MutablePool, UnvalidatedArtifact};
     use ic_interfaces::time_source::{SysTimeSource, TimeSource};
     use ic_test_utilities::types::ids::{NODE_1, NODE_2, NODE_3, NODE_4};
@@ -1646,16 +1648,14 @@ mod tests {
 
     #[test]
     fn test_crypto_verify_dealing() {
+        let mut rng = reproducible_rng();
         ic_test_utilities::artifact_pool_config::with_test_pool_config(|pool_config| {
             with_test_replica_logger(|logger| {
-                let env = CanisterThresholdSigTestEnvironment::new(1);
-                let subnet_nodes = env.receivers().into_iter().collect::<BTreeSet<_>>();
-                let crypto = env.crypto_components.into_values().next().unwrap();
-                let (_, pre_signer) = create_pre_signer_dependencies_with_crypto(
-                    pool_config,
-                    logger,
-                    Some(Arc::new(crypto)),
-                );
+                let env = CanisterThresholdSigTestEnvironment::new(1, &mut rng);
+                let subnet_nodes: BTreeSet<_> = env.nodes.ids();
+                let crypto = first_crypto(&env);
+                let (_, pre_signer) =
+                    create_pre_signer_dependencies_with_crypto(pool_config, logger, Some(crypto));
                 let id = create_transcript_id_with_height(4, Height::from(5));
                 let params = IDkgTranscriptParams::new(
                     id,
@@ -1991,6 +1991,7 @@ mod tests {
     // Tests that sending support shares is deferred if crypto returns transient error.
     #[test]
     fn test_ecdsa_defer_sending_dealing_support() {
+        let mut rng = reproducible_rng();
         ic_test_utilities::artifact_pool_config::with_test_pool_config(|pool_config| {
             with_test_replica_logger(|logger| {
                 let (mut ecdsa_pool, pre_signer) = create_pre_signer_dependencies_with_crypto(
@@ -2001,7 +2002,7 @@ mod tests {
                 let id = create_transcript_id(1);
 
                 // We haven't sent support yet, and we are in the receiver list
-                let dealing = create_dealing_with_payload(id, NODE_2);
+                let dealing = create_dealing_with_payload(id, NODE_2, &mut rng);
                 let change_set = vec![EcdsaChangeAction::AddToValidated(
                     EcdsaMessage::EcdsaSignedDealing(dealing),
                 )];
@@ -2025,6 +2026,7 @@ mod tests {
     // Tests that invalid dealings are handled invalid when creating new dealing support.
     #[test]
     fn test_ecdsa_dont_send_support_for_invalid() {
+        let mut rng = reproducible_rng();
         ic_test_utilities::artifact_pool_config::with_test_pool_config(|pool_config| {
             with_test_replica_logger(|logger| {
                 let (mut ecdsa_pool, pre_signer) = create_pre_signer_dependencies_with_crypto(
@@ -2035,7 +2037,7 @@ mod tests {
                 let id = create_transcript_id(1);
 
                 // We haven't sent support yet, and we are in the receiver list
-                let dealing = create_dealing_with_payload(id, NODE_2);
+                let dealing = create_dealing_with_payload(id, NODE_2, &mut rng);
                 let change_set = vec![EcdsaChangeAction::AddToValidated(
                     EcdsaMessage::EcdsaSignedDealing(dealing.clone()),
                 )];
@@ -2105,16 +2107,14 @@ mod tests {
 
     #[test]
     fn test_crypto_verify_dealing_support() {
+        let mut rng = reproducible_rng();
         ic_test_utilities::artifact_pool_config::with_test_pool_config(|pool_config| {
             with_test_replica_logger(|logger| {
-                let env = CanisterThresholdSigTestEnvironment::new(1);
-                let subnet_nodes = env.receivers().into_iter().collect::<BTreeSet<_>>();
-                let crypto = env.crypto_components.into_values().next().unwrap();
-                let (_, pre_signer) = create_pre_signer_dependencies_with_crypto(
-                    pool_config,
-                    logger,
-                    Some(Arc::new(crypto)),
-                );
+                let env = CanisterThresholdSigTestEnvironment::new(1, &mut rng);
+                let subnet_nodes: BTreeSet<_> = env.nodes.ids();
+                let crypto = first_crypto(&env);
+                let (_, pre_signer) =
+                    create_pre_signer_dependencies_with_crypto(pool_config, logger, Some(crypto));
                 let id = create_transcript_id_with_height(4, Height::from(5));
                 let params = IDkgTranscriptParams::new(
                     id,
@@ -2668,14 +2668,15 @@ mod tests {
     // Tests transcript builder failures and success
     #[test]
     fn test_ecdsa_transcript_builder() {
-        let env = CanisterThresholdSigTestEnvironment::new(3);
-        let params = env.params_for_random_sharing(AlgorithmId::ThresholdEcdsaSecp256k1);
+        let mut rng = reproducible_rng();
+        let env = CanisterThresholdSigTestEnvironment::new(3, &mut rng);
+        let params = env.params_for_random_sharing(AlgorithmId::ThresholdEcdsaSecp256k1, &mut rng);
         let tid = params.transcript_id();
         let (dealings, supports) = get_dealings_and_support(&env, &params);
         let block_reader =
             TestEcdsaBlockReader::for_pre_signer_test(tid.source_height(), vec![(&params).into()]);
         let metrics = EcdsaPayloadMetrics::new(MetricsRegistry::new());
-        let crypto = env.crypto_components.values().next().unwrap();
+        let crypto = first_crypto(&env);
 
         ic_test_utilities::artifact_pool_config::with_test_pool_config(|pool_config| {
             with_test_replica_logger(|logger| {
@@ -2685,7 +2686,7 @@ mod tests {
                 {
                     let b = EcdsaTranscriptBuilderImpl::new(
                         &block_reader,
-                        crypto,
+                        crypto.deref(),
                         &ecdsa_pool,
                         &metrics,
                         logger.clone(),
@@ -2711,7 +2712,7 @@ mod tests {
                 {
                     let b = EcdsaTranscriptBuilderImpl::new(
                         &block_reader,
-                        crypto,
+                        crypto.deref(),
                         &ecdsa_pool,
                         &metrics,
                         logger.clone(),
@@ -2739,7 +2740,7 @@ mod tests {
 
                 let b = EcdsaTranscriptBuilderImpl::new(
                     &block_reader,
-                    crypto,
+                    crypto.deref(),
                     &ecdsa_pool,
                     &metrics,
                     logger.clone(),
@@ -2761,7 +2762,7 @@ mod tests {
                         TestEcdsaBlockReader::for_pre_signer_test(tid.source_height(), vec![]);
                     let b = EcdsaTranscriptBuilderImpl::new(
                         &block_reader,
-                        crypto,
+                        crypto.deref(),
                         &ecdsa_pool,
                         &metrics,
                         logger.clone(),
@@ -2784,5 +2785,9 @@ mod tests {
                 assert_matches!(result, None);
             })
         });
+    }
+
+    fn first_crypto(env: &CanisterThresholdSigTestEnvironment) -> Arc<dyn ConsensusCrypto> {
+        env.nodes.iter().next().unwrap().crypto()
     }
 }

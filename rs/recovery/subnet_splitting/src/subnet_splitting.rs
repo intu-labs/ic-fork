@@ -4,28 +4,35 @@ use crate::{
         get_propose_to_prepare_canister_migration_command,
         get_propose_to_reroute_canister_ranges_command,
     },
-    steps::{CopyWorkDirStep, SplitStateStep, StateSplitStrategy},
+    layout::Layout,
+    state_tool_helper::StateToolHelper,
+    steps::{
+        ComputeExpectedManifestsStep, CopyWorkDirStep, SplitStateStep, StateSplitStrategy,
+        ValidateCUPStep, WaitForCUPStep,
+    },
+    target_subnet::TargetSubnet,
+    utils::get_state_hash,
 };
 
 use clap::Parser;
 use ic_base_types::SubnetId;
 use ic_recovery::{
-    cli::{consent_given, read_optional},
+    cli::{consent_given, read_optional, wait_for_confirmation},
     error::{RecoveryError, RecoveryResult},
     recovery_iterator::RecoveryIterator,
     recovery_state::{HasRecoveryState, RecoveryState},
-    steps::{AdminStep, Step, UploadAndRestartStep, WaitForCUPStep},
-    NeuronArgs, Recovery, RecoveryArgs, CHECKPOINTS, IC_REGISTRY_LOCAL_STORE, IC_STATE_DIR,
+    registry_helper::{RegistryPollingStrategy, VersionedRecoveryResult},
+    steps::{AdminStep, Step, UploadAndRestartStep},
+    NeuronArgs, Recovery, RecoveryArgs, IC_REGISTRY_LOCAL_STORE,
 };
-use ic_registry_routing_table::CanisterIdRange;
-use ic_state_manager::manifest::{manifest_from_path, manifest_hash};
+use ic_registry_routing_table::{CanisterIdRange, RoutingTable};
 use serde::{Deserialize, Serialize};
-use slog::Logger;
+use slog::{error, info, warn, Logger};
 use strum::{EnumMessage, IntoEnumIterator};
 use strum_macros::{EnumIter, EnumString};
+use url::Url;
 
-use std::{iter::Peekable, net::IpAddr, path::PathBuf};
-const DESTINATION_WORK_DIR: &str = "destination_work_dir";
+use std::{collections::HashMap, iter::Peekable, net::IpAddr};
 
 #[derive(
     Debug,
@@ -39,11 +46,13 @@ const DESTINATION_WORK_DIR: &str = "destination_work_dir";
     EnumMessage,
     clap::ValueEnum,
 )]
-pub(crate) enum StepType {
+pub enum StepType {
     PrepareCanisterMigration,
     HaltSourceSubnetAtCupHeight,
     RerouteCanisterRanges,
     DownloadStateFromSourceSubnet,
+    ValidateSourceSubnetCup,
+    ComputeExpectedManifestsStep,
     CopyDir,
     SplitOutSourceState,
     SplitOutDestinationState,
@@ -61,77 +70,91 @@ pub(crate) enum StepType {
 
 #[derive(Debug, Clone, PartialEq, Parser, Serialize, Deserialize)]
 #[clap(version = "1.0")]
-pub(crate) struct SubnetSplittingArgs {
+pub struct SubnetSplittingArgs {
     /// Id of the subnet whose state will be split.
-    #[clap(long, parse(try_from_str=crate::util::subnet_id_from_str))]
-    source_subnet_id: SubnetId,
+    #[clap(long, parse(try_from_str=ic_recovery::util::subnet_id_from_str))]
+    pub source_subnet_id: SubnetId,
 
     /// Id of the destination subnet.
-    #[clap(long, parse(try_from_str=crate::util::subnet_id_from_str))]
-    destination_subnet_id: SubnetId,
+    #[clap(long, parse(try_from_str=ic_recovery::util::subnet_id_from_str))]
+    pub destination_subnet_id: SubnetId,
 
     /// Public ssh key to be deployed to the subnet for read only access.
     #[clap(long)]
-    pub_key: Option<String>,
+    pub pub_key: Option<String>,
 
     /// If the downloaded state should be backed up locally.
     #[clap(long)]
-    keep_downloaded_state: Option<bool>,
+    pub keep_downloaded_state: Option<bool>,
 
     /// IP address of the node from the source subnet to download the state from.
     #[clap(long)]
-    download_node_source: Option<IpAddr>,
+    pub download_node_source: Option<IpAddr>,
 
     /// IP address of the node to upload the new subnet state to.
     #[clap(long)]
-    upload_node_source: Option<IpAddr>,
+    pub upload_node_source: Option<IpAddr>,
 
     /// IP address of the node to upload the new subnet state to.
     #[clap(long)]
-    upload_node_destination: Option<IpAddr>,
+    pub upload_node_destination: Option<IpAddr>,
 
     /// If present the tool will start execution for the provided step, skipping the initial ones.
     #[clap(long = "resume")]
     #[clap(value_enum)]
-    next_step: Option<StepType>,
+    pub next_step: Option<StepType>,
 
     /// The canister ID ranges to be moved to the destination subnet.
     #[clap(long, multiple_values(true), required = true)]
-    canister_id_ranges_to_move: Vec<CanisterIdRange>,
+    pub canister_id_ranges_to_move: Vec<CanisterIdRange>,
 }
 
-pub(crate) struct SubnetSplitting {
+pub struct SubnetSplitting {
     step_iterator: Peekable<StepTypeIter>,
     params: SubnetSplittingArgs,
     recovery_args: RecoveryArgs,
     neuron_args: Option<NeuronArgs>,
     recovery: Recovery,
+    state_tool_helper: StateToolHelper,
+    layout: Layout,
     logger: Logger,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq)]
-enum TargetSubnet {
-    Source,
-    Destination,
+    interactive: bool,
 }
 
 impl SubnetSplitting {
-    pub(crate) fn new(
+    pub fn new(
         logger: Logger,
         recovery_args: RecoveryArgs,
         neuron_args: Option<NeuronArgs>,
         subnet_args: SubnetSplittingArgs,
+        interactive: bool,
     ) -> Self {
-        let recovery = Recovery::new(logger.clone(), recovery_args.clone(), neuron_args.clone())
-            .expect("Failed to init recovery");
-        recovery.init_registry_local_store();
+        let recovery = Recovery::new(
+            logger.clone(),
+            recovery_args.clone(),
+            neuron_args.clone(),
+            recovery_args.nns_url.clone(),
+            RegistryPollingStrategy::WithEveryRead,
+        )
+        .expect("Failed to initialize recovery");
+
+        let state_tool_helper = StateToolHelper::new(
+            recovery.binary_dir.clone(),
+            recovery_args.replica_version.clone(),
+            logger.clone(),
+        )
+        .expect("Failed to initialize state tool helper");
+
         Self {
             step_iterator: StepType::iter().peekable(),
             params: subnet_args,
             recovery_args,
             neuron_args,
+            layout: Layout::new(&recovery),
             recovery,
+            state_tool_helper,
             logger,
+            interactive,
         }
     }
 
@@ -148,7 +171,9 @@ impl SubnetSplitting {
         SplitStateStep {
             subnet_id: self.subnet_id(target_subnet),
             state_split_strategy,
-            work_dir: self.work_dir(target_subnet),
+            state_tool_helper: self.state_tool_helper.clone(),
+            layout: self.layout.clone(),
+            target_subnet,
             logger: self.recovery.logger.clone(),
         }
     }
@@ -162,25 +187,13 @@ impl SubnetSplitting {
     }
 
     fn propose_cup(&self, target_subnet: TargetSubnet) -> RecoveryResult<impl Step> {
-        let checkpoints_dir = self
-            .work_dir(target_subnet)
-            .join(IC_STATE_DIR)
-            .join(CHECKPOINTS);
+        let checkpoints_dir = self.layout.checkpoints_dir(target_subnet);
 
         let (max_name, max_height) =
             Recovery::get_latest_checkpoint_name_and_height(&checkpoints_dir)?;
 
         let max_checkpoint_dir = checkpoints_dir.join(max_name);
-        let manifest = &manifest_from_path(&max_checkpoint_dir).map_err(|e| {
-            RecoveryError::CheckpointError(
-                format!(
-                    "Failed to read the manifest from path {}",
-                    max_checkpoint_dir.display()
-                ),
-                e,
-            )
-        })?;
-        let state_hash = hex::encode(manifest_hash(manifest));
+        let state_hash = get_state_hash(&max_checkpoint_dir)?;
 
         self.recovery.update_recovery_cup(
             self.subnet_id(target_subnet),
@@ -197,9 +210,9 @@ impl SubnetSplitting {
             Some(node_ip) => Ok(UploadAndRestartStep {
                 logger: self.recovery.logger.clone(),
                 node_ip,
-                work_dir: self.work_dir(target_subnet),
-                data_src: self.work_dir(target_subnet).join(IC_STATE_DIR),
-                require_confirmation: true,
+                work_dir: self.layout.work_dir(target_subnet),
+                data_src: self.layout.ic_state_dir(target_subnet),
+                require_confirmation: self.interactive,
                 key_file: self.recovery.key_file.clone(),
                 check_ic_replay_height: false,
             }),
@@ -211,8 +224,9 @@ impl SubnetSplitting {
         match self.upload_node(target_subnet) {
             Some(node_ip) => Ok(WaitForCUPStep {
                 logger: self.recovery.logger.clone(),
+                layout: self.layout.clone(),
                 node_ip,
-                work_dir: self.work_dir(target_subnet),
+                target_subnet,
             }),
             None => Err(RecoveryError::StepSkipped),
         }
@@ -231,15 +245,6 @@ impl SubnetSplitting {
             TargetSubnet::Destination => self.params.destination_subnet_id,
         }
     }
-
-    fn work_dir(&self, target_subnet: TargetSubnet) -> PathBuf {
-        match target_subnet {
-            TargetSubnet::Source => self.recovery.work_dir.clone(),
-            TargetSubnet::Destination => {
-                self.recovery.work_dir.with_file_name(DESTINATION_WORK_DIR)
-            }
-        }
-    }
 }
 
 impl RecoveryIterator<StepType, StepTypeIter> for SubnetSplitting {
@@ -256,12 +261,41 @@ impl RecoveryIterator<StepType, StepTypeIter> for SubnetSplitting {
     }
 
     fn interactive(&self) -> bool {
-        true
+        self.interactive
     }
 
     fn read_step_params(&mut self, step_type: StepType) {
         match step_type {
             StepType::HaltSourceSubnetAtCupHeight => {
+                read_registry(&self.logger, "Canister Migrations", || {
+                    self.recovery.registry_helper.get_canister_migrations()
+                });
+
+                let url = match self.recovery.registry_helper.latest_registry_version() {
+                    Ok(registry_version) => {
+                        format!(
+                            "https://grafana.mainnet.dfinity.network/d/cB-qtJX4k/subnet-splitting-pre-flight?var-datasource=IC+Metrics&var-ic=mercury&var-ic_subnet={}&var-registry_version={}",
+                            self.params.destination_subnet_id, registry_version
+                        )
+                    }
+                    Err(err) => {
+                        warn!(
+                            self.logger,
+                            "Failed to get the latest registry version: {}", err
+                        );
+                        format!(
+                            "https://grafana.mainnet.dfinity.network/d/cB-qtJX4k/subnet-splitting-pre-flight?var-datasource=IC+Metrics&var-ic=mercury&var-ic_subnet={}",
+                            self.params.destination_subnet_id
+                        )
+                    }
+                };
+
+                print_url_and_ask_for_confirmation(
+                    &self.logger,
+                    url,
+                    "Please check the dashboard to see if it is safe to begin subnet splitting",
+                );
+
                 if self.params.pub_key.is_none() {
                     self.params.pub_key = read_optional(
                         &self.logger,
@@ -270,7 +304,36 @@ impl RecoveryIterator<StepType, StepTypeIter> for SubnetSplitting {
                 }
             }
 
+            StepType::RerouteCanisterRanges => {
+                read_registry(&self.logger, "Source Subnet Record", || {
+                    self.recovery
+                        .registry_helper
+                        .get_subnet_record(self.params.source_subnet_id)
+                })
+            }
+
             StepType::DownloadStateFromSourceSubnet => {
+                let get_ranges = |routing_table: RoutingTable| {
+                    HashMap::from([
+                        (
+                            "source subnet canister ranges",
+                            routing_table.ranges(self.params.source_subnet_id),
+                        ),
+                        (
+                            "destination subnet canister ranges",
+                            routing_table.ranges(self.params.destination_subnet_id),
+                        ),
+                    ])
+                };
+
+                read_registry(&self.logger, "Routing Table", || {
+                    self.recovery.registry_helper.get_routing_table().map(
+                        |(registry_version, routing_table)| {
+                            (registry_version, routing_table.map(get_ranges))
+                        },
+                    )
+                });
+
                 if self.params.download_node_source.is_none() {
                     self.params.download_node_source =
                         read_optional(&self.logger, "Enter download IP on the Source Subnet:");
@@ -298,6 +361,38 @@ impl RecoveryIterator<StepType, StepTypeIter> for SubnetSplitting {
                         "Enter IP of node in the Destination Subnet with admin access: ",
                     );
                 }
+            }
+
+            StepType::Cleanup => read_registry(&self.logger, "Canister Migrations", || {
+                self.recovery.registry_helper.get_canister_migrations()
+            }),
+
+            StepType::UnhaltDestinationSubnet | StepType::CompleteCanisterMigration => {
+                let url = match self.recovery.registry_helper.latest_registry_version() {
+                    Ok(registry_version) => {
+                        format!(
+                            "https://grafana.mainnet.dfinity.network/d/K08U69_4k/subnet-splitting?var-datasource=IC+Metrics&var-ic=mercury&var-ic_subnet={}&var-registry_version={}",
+                            self.params.source_subnet_id, registry_version
+                        )
+                    }
+                    Err(err) => {
+                        warn!(
+                            self.logger,
+                            "Failed to get the latest registry version: {}", err
+                        );
+                        format!(
+                            "https://grafana.mainnet.dfinity.network/d/K08U69_4k/subnet-splitting?var-datasource=IC+Metrics&var-ic=mercury&var-ic_subnet={}",
+                            self.params.source_subnet_id,
+                        )
+                    }
+                };
+
+                print_url_and_ask_for_confirmation(
+                    &self.logger,
+                    url,
+                    "Please check the dashboard to see if it is safe to unhalt the \
+                    destination subnet and/or remove the canister migrations entry",
+                );
             }
 
             _ => (),
@@ -354,8 +449,7 @@ impl RecoveryIterator<StepType, StepTypeIter> for SubnetSplitting {
                     .into()
             }
             StepType::CopyDir => CopyWorkDirStep {
-                from: self.work_dir(TargetSubnet::Source),
-                to: self.work_dir(TargetSubnet::Destination),
+                layout: self.layout.clone(),
                 logger: self.recovery.logger.clone(),
             }
             .into(),
@@ -396,6 +490,21 @@ impl RecoveryIterator<StepType, StepTypeIter> for SubnetSplitting {
             .into(),
 
             StepType::Cleanup => self.recovery.get_cleanup_step().into(),
+            StepType::ComputeExpectedManifestsStep => ComputeExpectedManifestsStep {
+                layout: self.layout.clone(),
+                state_tool_helper: self.state_tool_helper.clone(),
+                source_subnet_id: self.params.source_subnet_id,
+                destination_subnet_id: self.params.destination_subnet_id,
+                canister_id_ranges_to_move: self.params.canister_id_ranges_to_move.clone(),
+            }
+            .into(),
+            StepType::ValidateSourceSubnetCup => ValidateCUPStep {
+                subnet_id: self.params.source_subnet_id,
+                nns_url: self.recovery_args.nns_url.clone(),
+                layout: self.layout.clone(),
+                logger: self.logger.clone(),
+            }
+            .into(),
         };
 
         Ok(step)
@@ -423,5 +532,42 @@ impl HasRecoveryState for SubnetSplitting {
             neuron_args: self.neuron_args.clone(),
             subcommand_args: self.params.clone(),
         })
+    }
+}
+
+fn read_registry<T: std::fmt::Debug>(
+    logger: &Logger,
+    label: &str,
+    querier: impl Fn() -> VersionedRecoveryResult<T>,
+) {
+    loop {
+        match querier() {
+            Ok((registry_version, value)) => info!(
+                logger,
+                "{} at registry version {}: {:?}", label, registry_version, value,
+            ),
+            Err(err) => error!(logger, "Failed getting {}, error: {}", label, err),
+        }
+
+        if !consent_given(logger, "Read registry again?") {
+            break;
+        }
+    }
+}
+
+fn print_url_and_ask_for_confirmation(
+    logger: &Logger,
+    url: String,
+    text_to_display: impl std::fmt::Display,
+) {
+    match Url::parse(&url) {
+        Ok(url) => {
+            info!(logger, "{}", text_to_display);
+            info!(logger, "{}", url);
+            wait_for_confirmation(logger);
+        }
+        Err(err) => {
+            warn!(logger, "Failed to parse url {}: {}", url, err);
+        }
     }
 }

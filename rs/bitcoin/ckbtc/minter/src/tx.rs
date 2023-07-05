@@ -27,6 +27,7 @@ pub const SIGHASH_ALL: u32 = 1;
 mod ops {
     pub const PUSH_20: u8 = 0x14;
     pub const PUSH_32: u8 = 0x20;
+    pub const OP_PUSHNUM_1: u8 = 0x51;
     pub const DUP: u8 = 0x76;
     pub const HASH160: u8 = 0xa9;
     pub const EQUAL: u8 = 0x87;
@@ -242,9 +243,10 @@ pub struct TxOut {
 pub fn encode_address_scipt_pubkey(btc_address: &BitcoinAddress, buf: &mut impl Buffer) {
     match btc_address {
         BitcoinAddress::P2wpkhV0(pkhash) => encode_p2wpkh_script_pubkey(pkhash, buf),
+        BitcoinAddress::P2wshV0(pkhash) => encode_p2wsh_script(pkhash, buf),
         BitcoinAddress::P2pkh(pkhash) => encode_sighash_script_code(pkhash, buf),
         BitcoinAddress::P2sh(pkhash) => encode_p2sh_script_code(pkhash, buf),
-        BitcoinAddress::P2tr(pkash) => encode_p2tr_script_pubkey(pkash, buf),
+        BitcoinAddress::P2trV1(pk) => encode_p2tr_script_pubkey(pk, buf),
     }
 }
 
@@ -308,7 +310,14 @@ impl<'a> TxSigHasher<'a> {
         }
     }
 
-    pub fn encode_sighash_data(&self, index: usize, pkhash: &[u8; 20], buf: &mut impl Buffer) {
+    pub fn encode_sighash_data(
+        &self,
+        input: &UnsignedInput,
+        pkhash: &[u8; 20],
+        buf: &mut impl Buffer,
+    ) {
+        debug_assert!(self.tx.inputs.contains(input));
+
         // Double SHA256 of the serialization of:
         //      1. nVersion of the transaction (4-byte little endian)
         TX_VERSION.encode(buf);
@@ -316,7 +325,6 @@ impl<'a> TxSigHasher<'a> {
         buf.write(&self.hash_prevouts[..]);
         //      3. hashSequence (32-byte hash)
         buf.write(&self.hash_sequence[..]);
-        let input = &self.tx.inputs[index];
         //      4. outpoint (32-byte hash + 4-byte little endian)
         input.previous_output.encode(buf);
         //      5. scriptCode of the input (serialized as scripts inside CTxOuts)
@@ -339,9 +347,7 @@ impl<'a> TxSigHasher<'a> {
     /// # Panics
     ///
     /// This function panics if the `index` is invalid transaction input index.
-    pub fn sighash(&self, index: usize, pkhash: &[u8; 20]) -> [u8; 32] {
-        assert!(index < self.tx.inputs.len());
-
+    pub fn sighash(&self, input: &UnsignedInput, pkhash: &[u8; 20]) -> [u8; 32] {
         // Spec:
         // https://github.com/bitcoin/bips/blob/master/bip-0143.mediawiki#specification
         //
@@ -349,7 +355,7 @@ impl<'a> TxSigHasher<'a> {
         // https://github.com/bitcoin/bitcoin/blob/5668ccec1d3785632caf4b74c1701019ecc88f41/src/script/interpreter.cpp#L1567-L1633
 
         let mut hasher = Sha256::new();
-        self.encode_sighash_data(index, pkhash, &mut hasher);
+        self.encode_sighash_data(input, pkhash, &mut hasher);
         Sha256::hash(&hasher.finish())
     }
 }
@@ -502,7 +508,13 @@ fn encode_p2wpkh_script_pubkey(pkhash: &[u8; 20], buf: &mut impl Buffer) {
 }
 
 fn encode_p2tr_script_pubkey(pkhash: &[u8; 32], buf: &mut impl Buffer) {
-    buf.write(&[34, 1, ops::PUSH_32]);
+    // https://docs.rs/bitcoin/latest/src/bitcoin/address.rs.html#389
+    buf.write(&[34, ops::OP_PUSHNUM_1, ops::PUSH_32]);
+    buf.write(&pkhash[..]);
+}
+
+fn encode_p2wsh_script(pkhash: &[u8; 32], buf: &mut impl Buffer) {
+    buf.write(&[34, 0, ops::PUSH_32]);
     buf.write(&pkhash[..]);
 }
 

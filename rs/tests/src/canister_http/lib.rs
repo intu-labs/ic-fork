@@ -42,12 +42,13 @@ pub fn install_nns_canisters(env: &TestEnv) {
         .nodes()
         .next()
         .expect("there is no NNS node");
-    nns_node
-        .install_nns_canisters()
+    NnsInstallationBuilder::new()
+        .install(&nns_node, env)
         .expect("NNS canisters not installed");
     info!(&env.logger(), "NNS canisters installed");
 }
 
+// WIP [NNS1-2157]
 pub fn install_mainnet_nns_canisters(env: &TestEnv) {
     let nns_node = env
         .topology_snapshot()
@@ -55,12 +56,14 @@ pub fn install_mainnet_nns_canisters(env: &TestEnv) {
         .nodes()
         .next()
         .expect("there is no NNS node");
-    nns_node
-        .install_mainnet_nns_canisters()
+    NnsInstallationBuilder::new()
+        .use_mainnet_nns_canisters()
+        .install(&nns_node, env)
         .expect("Mainnet NNS canisters not installed");
     info!(&env.logger(), "Mainnet NNS canisters installed");
 }
 
+// WIP [NNS1-2157]
 pub fn install_qualifying_nns_canisters(env: &TestEnv) {
     let nns_node = env
         .topology_snapshot()
@@ -68,8 +71,9 @@ pub fn install_qualifying_nns_canisters(env: &TestEnv) {
         .nodes()
         .next()
         .expect("there is no NNS node");
-    nns_node
-        .install_qualifying_nns_canisters()
+    NnsInstallationBuilder::new()
+        .use_qualifying_nns_canisters()
+        .install(&nns_node, env)
         .expect("Qualifying NNS canisters not installed");
     info!(&env.logger(), "Qualifying NNS canisters installed");
 }

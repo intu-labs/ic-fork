@@ -4,7 +4,7 @@ use crate::driver::{
     node_software_version::NodeSoftwareVersion,
     resource::{allocate_resources, get_resource_request, ResourceGroup},
     test_env::{TestEnv, TestEnvAttribute},
-    test_env_api::{HasIcDependencies, HasRegistryLocalStore, HasTopologySnapshot},
+    test_env_api::{HasRegistryLocalStore, HasTopologySnapshot},
     test_setup::GroupSetup,
 };
 use anyhow::Result;
@@ -12,7 +12,7 @@ use ic_prep_lib::node::NodeSecretKeyStore;
 use ic_prep_lib::prep_state_directory::IcPrepStateDir;
 use ic_protobuf::registry::subnet::v1::GossipConfig;
 use ic_regedit;
-use ic_registry_subnet_features::SubnetFeatures;
+use ic_registry_subnet_features::{EcdsaConfig, SubnetFeatures};
 use ic_registry_subnet_type::SubnetType;
 use ic_types::malicious_behaviour::MaliciousBehaviour;
 use ic_types::p2p::build_default_gossip_config;
@@ -177,6 +177,7 @@ impl InternetComputer {
 
     pub fn setup_and_start(&mut self, env: &TestEnv) -> Result<()> {
         // propagate required host features and resource settings to all vms
+        let farm = Farm::from_test_env(env, "Internet Computer");
         for subnet in self.subnets.iter_mut() {
             for node in subnet.nodes.iter_mut() {
                 node.required_host_features = node
@@ -200,15 +201,17 @@ impl InternetComputer {
 
         let tempdir = tempfile::tempdir()?;
         self.create_secret_key_stores(tempdir.path())?;
-        let logger = env.logger();
         let group_setup = GroupSetup::read_attribute(env);
-        let farm_base_url = env.get_farm_url()?;
-        let farm = Farm::new(farm_base_url, logger.clone());
         let group_name: String = group_setup.farm_group_name;
         let res_request = get_resource_request(self, env, &group_name)?;
         let res_group = allocate_resources(&farm, &res_request)?;
         self.propagate_ip_addrs(&res_group);
-        let init_ic = init_ic(self, env, &logger, self.use_specified_ids_allocation_range)?;
+        let init_ic = init_ic(
+            self,
+            env,
+            &env.logger(),
+            self.use_specified_ids_allocation_range,
+        )?;
 
         // save initial registry snapshot for this pot
         let local_store_path = env
@@ -223,11 +226,11 @@ impl InternetComputer {
             reg_snapshot_serialized,
         )
         .unwrap();
-        info!(
-            env.logger(),
-            "{}",
-            env.topology_snapshot_by_name(&self.name)
-        );
+        let topology_snapshot = env.topology_snapshot_by_name(&self.name);
+        // Pretty print IC Topology using the Display implementation
+        info!(env.logger(), "{topology_snapshot}");
+        // Emit a json log event, to be consumed by log post-processing tools.
+        topology_snapshot.emit_log_event(&env.logger());
         setup_and_start_vms(&init_ic, self, env, &farm, &group_name)?;
         Ok(())
     }
@@ -331,6 +334,7 @@ pub struct Subnet {
     pub max_number_of_canisters: Option<u64>,
     pub ssh_readonly_access: Vec<String>,
     pub ssh_backup_access: Vec<String>,
+    pub ecdsa_config: Option<EcdsaConfig>,
 }
 
 impl Subnet {
@@ -357,6 +361,7 @@ impl Subnet {
             subnet_type,
             ssh_readonly_access: vec![],
             ssh_backup_access: vec![],
+            ecdsa_config: None,
         }
     }
 
@@ -377,6 +382,14 @@ impl Subnet {
 
     pub fn with_required_host_features(mut self, required_host_features: Vec<HostFeature>) -> Self {
         self.required_host_features = required_host_features;
+        self
+    }
+
+    pub fn with_max_ingress_messages_per_block(
+        mut self,
+        max_ingress_messages_per_block: u64,
+    ) -> Self {
+        self.max_ingress_messages_per_block = Some(max_ingress_messages_per_block);
         self
     }
 
@@ -492,6 +505,11 @@ impl Subnet {
         self
     }
 
+    pub fn with_ecdsa_config(mut self, ecdsa_config: EcdsaConfig) -> Self {
+        self.ecdsa_config = Some(ecdsa_config);
+        self
+    }
+
     pub fn add_malicious_nodes(
         mut self,
         no_of_nodes: usize,
@@ -539,6 +557,7 @@ impl Default for Subnet {
             max_number_of_canisters: None,
             ssh_readonly_access: vec![],
             ssh_backup_access: vec![],
+            ecdsa_config: None,
         }
     }
 }
