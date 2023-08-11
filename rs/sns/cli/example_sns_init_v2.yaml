@@ -30,6 +30,7 @@ Token:
     name: Batman
     symbol: BTM
     transaction_fee: 10_000 e8s
+    logo: test.png
 
 Proposals:
     rejection_fee: 1 token
@@ -37,7 +38,7 @@ Proposals:
     maximum_wait_for_quiet_deadline_extension: 1 day
 
 Neurons:
-    minimum_creation_stake: 10 tokens
+    minimum_creation_stake: 61800 e8s
 
 Voting:
     minimum_dissolve_delay: 26 weeks
@@ -81,13 +82,13 @@ Distribution:
     total: 129.9 tokens # 60 + 40 + 15 + 14.9
 
 Swap:
-    minimum_participants: 57
+    minimum_participants: 50
 
-    minimum_icp: 232_714 tokens
-    maximum_icp: 557_054 tokens
+    minimum_icp: 123 tokens
+    maximum_icp: 65000 tokens
 
-    minimum_participant_icp: 5 tokens
-    maximum_participant_icp: 100 tokens
+    minimum_participant_icp: 650 tokens
+    maximum_participant_icp: 6500 tokens
 
     confirmation_text: Hello, world?
 
@@ -101,3 +102,5 @@ Swap:
 
     start_time: 12:00 UTC
     duration: 7 days
+
+    neurons_fund_investment_icp: 1_000 tokens

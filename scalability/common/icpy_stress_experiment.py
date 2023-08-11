@@ -192,9 +192,16 @@ async def poll(agent: Agent, canister_id, req_id: bytes, status_histogram: dict)
     # Even if it wasn't the same agent, it shouldn't matter since the ingress
     # history should be the same on all nodes.
     assert req_id is not None
-    status, result = await agent.poll_async(canister_id, req_id, timeout=POLL_TIMEOUT_SEC)
-    status_histogram[status] = status_histogram.get(status, 0) + 1
-    logging.debug(status, result)
+    status = None
+    try:
+        status, result = await agent.poll_async(canister_id, req_id, timeout=POLL_TIMEOUT_SEC)
+        status_histogram[status] = status_histogram.get(status, 0) + 1
+        logging.debug(status, result)
+    except Exception as e:
+        # If polling fails, just keep track of failure and move on.
+        key = "poll_" + str(type(e).__name__)
+        status_histogram[key] = status_histogram.get(key, 0) + 1
+        logging.debug(f"Failed to poll: {e}")
     return status == "replied"
 
 
@@ -352,14 +359,15 @@ class IcPyStressExperiment(BaseExperiment):
     def __init__(self, use_delegation: bool = True):
         """Init."""
         super().__init__(request_type="update")
+        self.nns_host = self._get_nns_url()
         self.host_ip = self.get_machine_to_instrument()
         self.host_url = f"http://[{self.host_ip}]:8080"
         if use_delegation:
             print(f"Running with {FLAGS.num_identities} delegated indentities.")
-            ii_canister_id = get_ii_canister_id(self.host_url)
+            ii_canister_id = get_ii_canister_id(self.nns_host)
             with multiprocessing.Pool(FLAGS.num_procs) as pool:
                 # We get all delegates from the same host
-                raw_result = pool.starmap(get_delegation, [(self.host_url, ii_canister_id)] * FLAGS.num_identities)
+                raw_result = pool.starmap(get_delegation, [(self.nns_host, ii_canister_id)] * FLAGS.num_identities)
                 self.identities = [element[0] for element in raw_result]
         else:
             print(f"Running with {FLAGS.num_identities} different non-delegated identities.")

@@ -19,7 +19,7 @@ DEPENDENCIES = [
     "//rs/config",
     "//rs/constants",
     "//rs/crypto",
-    "//rs/crypto/sha",
+    "//rs/crypto/sha2",
     "//rs/crypto/test_utils/reproducible_rng",
     "//rs/crypto/tree_hash",
     "//rs/cup_explorer",
@@ -44,6 +44,7 @@ DEPENDENCIES = [
     "//rs/prep",
     "//rs/protobuf",
     "//rs/recovery",
+    "//rs/recovery/subnet_splitting:subnet_splitting",
     "//rs/registry/canister",
     "//rs/registry/client",
     "//rs/registry/helpers",
@@ -68,6 +69,7 @@ DEPENDENCIES = [
     "//rs/rosetta-api/test_utils",
     "//rs/rust_canisters/canister_test",
     "//rs/rust_canisters/dfn_candid",
+    "//rs/rust_canisters/dfn_json",
     "//rs/rust_canisters/dfn_core",
     "//rs/rust_canisters/dfn_protobuf",
     "//rs/rust_canisters/on_wire",
@@ -126,6 +128,7 @@ DEPENDENCIES = [
     "@crate_index//:rand_0_8_4",
     "@crate_index//:rand_chacha_0_3_1",
     "@crate_index//:rayon",
+    "@crate_index//:rcgen",
     "@crate_index//:regex",
     "@crate_index//:reqwest",
     "@crate_index//:ring",
@@ -352,6 +355,8 @@ CANISTER_HTTP_RUNTIME_DEPS = [
 
 XNET_TEST_CANISTER_RUNTIME_DEPS = ["//rs/rust_canisters/xnet_test:xnet-test-canister"]
 
+STATESYNC_TEST_CANISTER_RUNTIME_DEPS = ["//rs/rust_canisters/statesync_test:statesync_test_canister"]
+
 def _symlink_dir(ctx):
     dirname = ctx.attr.name
     lns = []
@@ -367,6 +372,26 @@ def _symlink_dir(ctx):
 
 symlink_dir = rule(
     implementation = _symlink_dir,
+    attrs = {
+        "targets": attr.label_keyed_string_dict(allow_files = True),
+    },
+)
+
+def _symlink_dirs(ctx):
+    dirname = ctx.attr.name
+    lns = []
+    for target, childdirname in ctx.attr.targets.items():
+        for file in target[DefaultInfo].files.to_list():
+            ln = ctx.actions.declare_file(dirname + "/" + childdirname + "/" + file.basename)
+            ctx.actions.symlink(
+                output = ln,
+                target_file = file,
+            )
+            lns.append(ln)
+    return [DefaultInfo(files = depset(direct = lns))]
+
+symlink_dirs = rule(
+    implementation = _symlink_dirs,
     attrs = {
         "targets": attr.label_keyed_string_dict(allow_files = True),
     },

@@ -1,8 +1,8 @@
-///! State management module.
-///!
-///! The state is stored in the global thread-level variable `__STATE`.
-///! This module provides utility functions to manage the state. Most
-///! code should use those functions instead of touching `__STATE` directly.
+//! State management module.
+//!
+//! The state is stored in the global thread-level variable `__STATE`.
+//! This module provides utility functions to manage the state. Most
+//! code should use those functions instead of touching `__STATE` directly.
 use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet, VecDeque},
@@ -416,6 +416,18 @@ impl CkBtcMinterState {
         }
         if let Some(kyt_fee) = kyt_fee {
             self.kyt_fee = kyt_fee;
+        }
+    }
+
+    pub fn validate_config(&self) {
+        if self.kyt_fee > self.retrieve_btc_min_amount {
+            ic_cdk::trap("kyt_fee cannot be greater than retrieve_btc_min_amount");
+        }
+        if self.ecdsa_key_name.is_empty() {
+            ic_cdk::trap("ecdsa_key_name is not set");
+        }
+        if self.kyt_principal.is_none() {
+            ic_cdk::trap("KYT principal is not set");
         }
     }
 

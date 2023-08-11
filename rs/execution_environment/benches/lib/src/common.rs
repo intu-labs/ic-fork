@@ -15,7 +15,6 @@ use ic_execution_environment::{
 use ic_interfaces::execution_environment::{
     ExecutionComplexity, ExecutionMode, IngressHistoryWriter, SubnetAvailableMemory,
 };
-use ic_interfaces::messages::CanisterMessage;
 use ic_logger::replica_logger::no_op_logger;
 use ic_metrics::MetricsRegistry;
 use ic_nns_constants::CYCLES_MINTING_CANISTER_INDEX_IN_NNS_SUBNET;
@@ -32,7 +31,7 @@ use ic_test_utilities::{
 };
 use ic_test_utilities_execution_environment::generate_network_topology;
 use ic_types::{
-    messages::{CallbackId, Payload, RejectContext},
+    messages::{CallbackId, CanisterMessage, Payload, RejectContext},
     methods::{Callback, WasmClosure},
     Cycles, MemoryAllocation, NumBytes, NumInstructions, Time,
 };
@@ -47,9 +46,14 @@ pub const LOCAL_CANISTER_ID: u64 = CYCLES_MINTING_CANISTER_INDEX_IN_NNS_SUBNET;
 pub const REMOTE_CANISTER_ID: u64 = 1;
 pub const USER_ID: u64 = 0;
 
+const SUBNET_MEMORY_CAPACITY: i64 = i64::MAX;
+
 lazy_static! {
-    static ref MAX_SUBNET_AVAILABLE_MEMORY: SubnetAvailableMemory =
-        SubnetAvailableMemory::new(i64::MAX, i64::MAX, i64::MAX);
+    static ref MAX_SUBNET_AVAILABLE_MEMORY: SubnetAvailableMemory = SubnetAvailableMemory::new(
+        SUBNET_MEMORY_CAPACITY,
+        SUBNET_MEMORY_CAPACITY,
+        SUBNET_MEMORY_CAPACITY
+    );
 }
 
 /// Pieces needed to execute a benchmark.
@@ -148,6 +152,8 @@ where
         compute_allocation: canister_state.compute_allocation(),
         subnet_type: hypervisor.subnet_type(),
         execution_mode: ExecutionMode::Replicated,
+        subnet_memory_capacity: NumBytes::new(SUBNET_MEMORY_CAPACITY as u64),
+        subnet_memory_threshold: NumBytes::new(SUBNET_MEMORY_CAPACITY as u64),
     };
 
     let subnets = vec![own_subnet_id, nns_subnet_id];

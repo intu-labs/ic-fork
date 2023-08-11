@@ -22,18 +22,21 @@ use ic_nns_governance::{
         ONE_YEAR_SECONDS,
     },
     pb::v1::{
-        governance_error::ErrorType::{
-            self, InvalidCommand, NotAuthorized, NotFound, PreconditionFailed,
-        },
+        governance_error::ErrorType::{self, NotAuthorized, NotFound, PreconditionFailed},
         manage_neuron::{
             claim_or_refresh::By, ClaimOrRefresh, Command, Follow, Merge, NeuronIdOrSubaccount,
         },
         manage_neuron_response::{Command as CommandResponse, MergeResponse},
-        neuron::Followees,
+        neuron::{
+            DissolveState,
+            DissolveState::{DissolveDelaySeconds, WhenDissolvedTimestampSeconds},
+            Followees,
+        },
         proposal::{self},
         Empty, GovernanceError, ManageNeuron, ManageNeuronResponse, NetworkEconomics, Topic,
     },
 };
+use ic_sns_swap::pb::v1::governance_error::ErrorType::RequiresNotDissolving;
 use proptest::prelude::{proptest, TestCaseError};
 
 // Using a `pub mod` works around spurious dead code warnings; see
@@ -353,8 +356,8 @@ fn test_merge_neurons_fails() {
             &NeuronId { id: 7 },
         ),
         Err(GovernanceError{error_type: code, error_message: msg})
-        if code == InvalidCommand as i32 &&
-           msg == "Subaccount of source neuron is not valid");
+        if code == NotFound as i32 &&
+           msg.contains("has invalid account"));
 
     // 12. Subaccount of target neuron to be merged must be present
     assert_matches!(
@@ -364,8 +367,8 @@ fn test_merge_neurons_fails() {
             &NeuronId { id: 8 },
         ),
         Err(GovernanceError{error_type: code, error_message: msg})
-        if code == InvalidCommand as i32 &&
-           msg == "Subaccount of target neuron is not valid");
+        if code == NotFound as i32 &&
+           msg.contains("has invalid account"));
 
     // 13. Neither neuron can be the proposer of an open proposal
     let _pid = nns.propose_and_vote("-----------P", "the unique proposal".to_string());
@@ -474,6 +477,83 @@ fn test_merge_neurons_fails() {
         Err(GovernanceError{error_type: code, error_message: msg})
         if code == PreconditionFailed as i32 &&
            msg == "ManageNeuron following of source and target does not match");
+}
+
+#[test]
+fn test_merge_neurons_only_works_for_non_dissolving_neurons_with_dissolve_delay() {
+    fn try_merging_dissolve_states(
+        source_dissolve_state: Option<DissolveState>,
+        target_dissolve_state: Option<DissolveState>,
+    ) -> Result<(), GovernanceError> {
+        let start_time = DEFAULT_TEST_START_TIMESTAMP_SECONDS;
+        let mut nns = NNSBuilder::new()
+            .set_start_time(start_time)
+            .set_economics(NetworkEconomics::with_default_values())
+            .with_supply(0) // causes minting account to be created
+            .add_account_for(principal(1), 0)
+            .add_neuron(
+                NeuronBuilder::new(1, icp_to_e8s(1), principal(1))
+                    .set_dissolve_state(source_dissolve_state),
+            )
+            .add_neuron(
+                NeuronBuilder::new(2, icp_to_e8s(1), principal(1))
+                    .set_dissolve_state(target_dissolve_state),
+            )
+            .create();
+
+        nns.merge_neurons(&NeuronId { id: 2 }, &principal(1), &NeuronId { id: 1 })
+    }
+    let start_time = DEFAULT_TEST_START_TIMESTAMP_SECONDS;
+
+    // Successful responses as precondition
+    assert_eq!(
+        try_merging_dissolve_states(Some(DissolveDelaySeconds(1)), Some(DissolveDelaySeconds(1))),
+        Ok(())
+    );
+
+    let cases = [
+        // None DissolveState
+        (None, None),
+        (Some(DissolveDelaySeconds(1)), None),
+        (None, Some(DissolveDelaySeconds(1))),
+        // 0 DissolveDelaySeconds
+        (Some(DissolveDelaySeconds(0)), Some(DissolveDelaySeconds(0))),
+        (Some(DissolveDelaySeconds(1)), Some(DissolveDelaySeconds(0))),
+        (Some(DissolveDelaySeconds(0)), Some(DissolveDelaySeconds(1))),
+        // Dissolving
+        (
+            Some(WhenDissolvedTimestampSeconds(start_time + 100)),
+            Some(WhenDissolvedTimestampSeconds(start_time + 100)),
+        ),
+        (
+            Some(DissolveDelaySeconds(1)),
+            Some(WhenDissolvedTimestampSeconds(start_time + 100)),
+        ),
+        (
+            Some(WhenDissolvedTimestampSeconds(start_time + 100)),
+            Some(DissolveDelaySeconds(1)),
+        ),
+        // Dissolved
+        (
+            Some(WhenDissolvedTimestampSeconds(start_time - 100)),
+            Some(WhenDissolvedTimestampSeconds(start_time - 100)),
+        ),
+        (
+            Some(DissolveDelaySeconds(1)),
+            Some(WhenDissolvedTimestampSeconds(start_time - 100)),
+        ),
+        (
+            Some(WhenDissolvedTimestampSeconds(start_time - 100)),
+            Some(DissolveDelaySeconds(1)),
+        ),
+    ];
+
+    for (source, dest) in cases {
+        assert_matches!(try_merging_dissolve_states(source, dest),
+        Err(GovernanceError{error_type: code, error_message: msg})
+        if code == RequiresNotDissolving as i32 &&
+           msg == "Only two non-dissolving neurons with a dissolve delay greater than 0 can be merged.");
+    }
 }
 
 #[test]

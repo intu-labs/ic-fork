@@ -7,20 +7,18 @@ use ic_base_types::{CanisterId, NumBytes, PrincipalId};
 use ic_config::flag_status::FlagStatus;
 use ic_embedders::wasm_executor::CanisterStateChanges;
 use ic_ic00_types::{CanisterChangeDetails, CanisterChangeOrigin, CanisterInstallMode};
-use ic_interfaces::{
-    execution_environment::{
-        HypervisorError, HypervisorResult, SubnetAvailableMemoryError, WasmExecutionOutput,
-    },
-    messages::CanisterCall,
+use ic_interfaces::execution_environment::{
+    HypervisorError, HypervisorResult, SubnetAvailableMemoryError, WasmExecutionOutput,
 };
 use ic_logger::{error, fatal, info, warn};
+use ic_replicated_state::metadata_state::subnet_call_context_manager::InstallCodeRequestId;
 use ic_replicated_state::{CanisterState, ExecutionState};
 use ic_state_layout::{CanisterLayout, CheckpointLayout, ReadOnly};
 use ic_sys::PAGE_SIZE;
 use ic_system_api::ExecutionParameters;
 use ic_types::{
-    funds::Cycles, CanisterTimer, ComputeAllocation, Height, MemoryAllocation, NumInstructions,
-    Time,
+    funds::Cycles, messages::CanisterCall, CanisterTimer, ComputeAllocation, Height,
+    MemoryAllocation, NumInstructions, Time,
 };
 use ic_wasm_types::WasmHash;
 
@@ -204,9 +202,45 @@ impl InstallCodeHelper {
             self.canister.system_state.balance()
         );
 
+        round.cycles_account_manager.refund_unused_execution_cycles(
+            &mut self.canister.system_state,
+            instructions_left,
+            message_instruction_limit,
+            original.prepaid_execution_cycles,
+            round.execution_refund_error_counter,
+            original.subnet_size,
+            round.log,
+        );
+
         self.canister
             .system_state
             .apply_ingress_induction_cycles_debit(self.canister.canister_id(), round.log);
+
+        if self.allocated_bytes > self.deallocated_bytes {
+            let threshold = round.cycles_account_manager.freeze_threshold_cycles(
+                self.canister.system_state.freeze_threshold,
+                self.canister.memory_allocation(),
+                self.canister.memory_usage(),
+                self.canister.compute_allocation(),
+                original.subnet_size,
+                self.canister.system_state.reserved_balance(),
+            );
+            if self.canister.system_state.balance() < threshold {
+                let bytes = self.allocated_bytes - self.deallocated_bytes;
+                let err = CanisterManagerError::InsufficientCyclesInMemoryGrow {
+                    bytes,
+                    available: self.canister.system_state.balance(),
+                    threshold,
+                };
+                return finish_err(
+                    clean_canister,
+                    self.instructions_left(),
+                    original,
+                    round,
+                    err,
+                );
+            }
+        }
 
         let mut subnet_available_memory = round_limits.subnet_available_memory;
         subnet_available_memory.increment(
@@ -284,16 +318,6 @@ impl InstallCodeHelper {
 
         round_limits.subnet_available_memory = subnet_available_memory;
 
-        round.cycles_account_manager.refund_unused_execution_cycles(
-            &mut self.canister.system_state,
-            instructions_left,
-            message_instruction_limit,
-            original.prepaid_execution_cycles,
-            round.execution_refund_error_counter,
-            original.subnet_size,
-            round.log,
-        );
-
         if original.config.rate_limiting_of_instructions == FlagStatus::Enabled {
             self.canister.scheduler_state.install_code_debit += self.instructions_consumed();
         }
@@ -309,6 +333,7 @@ impl InstallCodeHelper {
         DtsInstallCodeResult::Finished {
             canister: self.canister,
             message: original.message,
+            request_id: original.request_id,
             instructions_used,
             result: Ok(InstallCodeResult {
                 heap_delta: self.total_heap_delta,
@@ -322,6 +347,7 @@ impl InstallCodeHelper {
     pub fn validate_input(
         &mut self,
         original: &OriginalContext,
+        round: &RoundContext,
         round_limits: &RoundLimits,
     ) -> Result<(), CanisterManagerError> {
         self.steps.push(InstallCodeStep::ValidateInput);
@@ -346,6 +372,11 @@ impl InstallCodeHelper {
             round_limits.compute_allocation_used,
             original.config.compute_capacity,
             original.config.max_controllers,
+            self.canister.system_state.freeze_threshold,
+            self.canister.system_state.balance(),
+            round.cycles_account_manager,
+            original.subnet_size,
+            self.canister.system_state.reserved_balance(),
         )?;
 
         match original.mode {
@@ -589,7 +620,7 @@ impl InstallCodeHelper {
         round_limits: &RoundLimits,
     ) -> Result<(), CanisterManagerError> {
         match step {
-            InstallCodeStep::ValidateInput => self.validate_input(original, round_limits),
+            InstallCodeStep::ValidateInput => self.validate_input(original, round, round_limits),
             InstallCodeStep::ReplaceExecutionStateAndAllocations {
                 instructions_from_compilation,
                 maybe_execution_state,
@@ -617,6 +648,7 @@ pub(crate) struct OriginalContext {
     pub canister_layout_path: PathBuf,
     pub config: CanisterMgrConfig,
     pub message: CanisterCall,
+    pub request_id: Option<InstallCodeRequestId>,
     pub prepaid_execution_cycles: Cycles,
     pub time: Time,
     pub compilation_cost_handling: CompilationCostHandling,
@@ -700,6 +732,7 @@ pub(crate) fn finish_err(
     DtsInstallCodeResult::Finished {
         canister: new_canister,
         message: original.message,
+        request_id: original.request_id,
         instructions_used,
         result: Err(err),
     }

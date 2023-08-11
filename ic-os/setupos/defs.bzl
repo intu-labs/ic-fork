@@ -4,7 +4,7 @@ Hold manifest common to all SetupOS variants.
 
 load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("//toolchains/sysimage:toolchain.bzl", "ext4_image", "fat32_image")
-load("@bazel_tools//tools/build_defs/pkg:pkg.bzl", "pkg_tar")
+load("@rules_pkg//:pkg.bzl", "pkg_tar")
 
 # Declare the dependencies that we will have for the built filesystem images.
 # This needs to be done separately from the build rules because we want to
@@ -78,12 +78,17 @@ def _custom_partitions(mode):
         allow_symlink = True,
     )
 
+    config_dict = {
+        Label("//ic-os/setupos:config/config.ini"): "config.ini",
+        Label("//ic-os/setupos:config/ssh_authorized_keys/admin"): "ssh_authorized_keys/admin",
+    }
+
+    if mode == "dev" or mode == "dev-sev":
+        config_dict[Label("//ic-os/setupos:config/node_operator_private_key.pem")] = "node_operator_private_key.pem"
+
     pkg_tar(
         name = "config_tar",
-        srcs = [
-            Label("//ic-os/setupos:config/config.ini"),
-            Label("//ic-os/setupos:config/ssh_authorized_keys"),
-        ] + ([Label("//ic-os/setupos:config/node_operator_private_key.pem")] if mode == "dev" else []),
+        files = config_dict,
         mode = "0644",
         package_dir = "config",
     )
@@ -93,7 +98,7 @@ def _custom_partitions(mode):
         src = "config_tar",
         label = "CONFIG",
         partition_size = "50M",
-        subdir = "./config",
+        subdir = "config",
         target_compatible_with = [
             "@platforms//os:linux",
         ],
@@ -122,7 +127,7 @@ def _custom_partitions(mode):
         name = "partition-data.tar",
         src = "data_tar",
         partition_size = "1750M",
-        subdir = "./data",
+        subdir = "data",
         target_compatible_with = [
             "@platforms//os:linux",
         ],

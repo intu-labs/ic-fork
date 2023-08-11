@@ -215,6 +215,24 @@ pub struct BitcoinSendTransactionInternalContextTree {
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct InstallCodeRequest {
+    #[prost(message, optional, tag = "1")]
+    pub request: ::core::option::Option<super::super::queues::v1::Request>,
+    #[prost(message, optional, tag = "2")]
+    pub time: ::core::option::Option<Time>,
+    #[prost(message, optional, tag = "3")]
+    pub effective_canister_id: ::core::option::Option<super::super::super::types::v1::CanisterId>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct InstallCodeRequestTree {
+    #[prost(uint64, tag = "1")]
+    pub request_id: u64,
+    #[prost(message, optional, tag = "2")]
+    pub request: ::core::option::Option<InstallCodeRequest>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SubnetCallContextManager {
     #[prost(uint64, tag = "1")]
     pub next_callback_id: u64,
@@ -231,6 +249,10 @@ pub struct SubnetCallContextManager {
     #[prost(message, repeated, tag = "9")]
     pub bitcoin_send_transaction_internal_contexts:
         ::prost::alloc::vec::Vec<BitcoinSendTransactionInternalContextTree>,
+    #[prost(message, repeated, tag = "11")]
+    pub install_code_requests: ::prost::alloc::vec::Vec<InstallCodeRequestTree>,
+    #[prost(uint64, tag = "12")]
+    pub next_install_code_request_id: u64,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -257,6 +279,14 @@ pub struct BitcoinGetSuccessorsFollowUpResponses {
     pub sender: ::core::option::Option<super::super::super::types::v1::CanisterId>,
     #[prost(bytes = "vec", repeated, tag = "2")]
     pub payloads: ::prost::alloc::vec::Vec<::prost::alloc::vec::Vec<u8>>,
+}
+#[allow(clippy::derive_partial_eq_without_eq)]
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct NodePublicKeyEntry {
+    #[prost(message, optional, tag = "1")]
+    pub node_id: ::core::option::Option<super::super::super::types::v1::NodeId>,
+    #[prost(bytes = "vec", tag = "2")]
+    pub public_key: ::prost::alloc::vec::Vec<u8>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -304,6 +334,8 @@ pub struct SystemMetadata {
     #[prost(message, repeated, tag = "18")]
     pub bitcoin_get_successors_follow_up_responses:
         ::prost::alloc::vec::Vec<BitcoinGetSuccessorsFollowUpResponses>,
+    #[prost(message, repeated, tag = "19")]
+    pub node_public_keys: ::prost::alloc::vec::Vec<NodePublicKeyEntry>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]

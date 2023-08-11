@@ -109,14 +109,9 @@ fn main() {
     let nodes = BTreeMap::from([(
         0,
         NodeConfiguration {
-            xnet_api: SocketAddr::new(ipv6_addr, 2497).into(),
-            public_api: SocketAddr::new(ipv6_addr, 8080).into(),
-            p2p_addr: format!(
-                "org.internetcomputer.p2p1://{}",
-                SocketAddr::new(ipv6_addr, 4100)
-            )
-            .parse()
-            .unwrap(),
+            xnet_api: SocketAddr::new(ipv6_addr, 2497),
+            public_api: SocketAddr::new(ipv6_addr, 8080),
+            p2p_addr: SocketAddr::new(ipv6_addr, 4100),
             node_operator_principal_id: None,
             secret_key_store: None,
             chip_id: vec![],

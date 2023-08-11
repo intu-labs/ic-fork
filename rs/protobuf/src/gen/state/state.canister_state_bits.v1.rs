@@ -321,6 +321,8 @@ pub mod execution_task {
         #[prost(message, optional, tag = "3")]
         pub prepaid_execution_cycles:
             ::core::option::Option<super::super::super::queues::v1::Cycles>,
+        #[prost(uint64, optional, tag = "4")]
+        pub request_id: ::core::option::Option<u64>,
         #[prost(oneof = "aborted_install_code::Message", tags = "1, 2")]
         pub message: ::core::option::Option<aborted_install_code::Message>,
     }
@@ -523,6 +525,9 @@ pub struct CanisterStateBits {
         ::prost::alloc::vec::Vec<ConsumedCyclesByUseCase>,
     #[prost(message, optional, tag = "37")]
     pub canister_history: ::core::option::Option<CanisterHistory>,
+    /// Resource reservation cycles.
+    #[prost(message, optional, tag = "38")]
+    pub reserved_balance: ::core::option::Option<super::super::queues::v1::Cycles>,
     #[prost(oneof = "canister_state_bits::CanisterStatus", tags = "11, 12, 13")]
     pub canister_status: ::core::option::Option<canister_state_bits::CanisterStatus>,
 }

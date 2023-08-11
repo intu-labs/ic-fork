@@ -12,7 +12,6 @@ NO_STRIP = [
     "canister_sandbox",
     "ic-btc-adapter",
     "ic-https-outcalls-adapter",
-    "ic-onchain-observability-adapter",
     "replica",
 ]
 
@@ -34,7 +33,6 @@ BINARIES = {
     "ic-https-outcalls-adapter": "//rs/https_outcalls/adapter:ic-https-outcalls-adapter",
     "ic-consensus-pool-util": "//rs/artifact_pool:ic-consensus-pool-util",
     "ic-crypto-csp": "//rs/crypto:ic-crypto-csp",
-    "ic-onchain-observability-adapter": "//rs/monitoring/onchain_observability/adapter:ic-onchain-observability-adapter",
     "ic-nns-init": "//rs/nns/init:ic-nns-init",
     "ic-p8s-sd": "//rs/ic_p8s_service_discovery:ic-p8s-sd",
     "ic-p8s-service-discovery": "//rs/ic_p8s_service_discovery:ic-p8s-service-discovery",
@@ -47,8 +45,10 @@ BINARIES = {
     "ic-test-state-machine": "//rs/state_machine_tests:ic-test-state-machine",
     "ic-workload-generator": "//rs/workload_generator:ic-workload-generator",
     "icx-proxy": "//rs/boundary_node/icx_proxy:icx-proxy",
+    "icx-proxy-dev": "//rs/boundary_node/icx_proxy:icx-proxy-dev",
     "log-vector-config-generator": "//rs/observability/log_vector_config_generator:log_vector_config_generator",
     "orchestrator": "//rs/orchestrator",
+    "prometheus-config-updater": "//rs/observability/prometheus_config_updater:prometheus_config_updater",
     "sandbox_launcher": "//rs/canister_sandbox/sandbox_launcher",
     "sevctl": "//rs/ic_os/sevctl:sevctl",
     "sns": "//rs/sns/cli:sns",

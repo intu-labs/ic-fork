@@ -1,11 +1,15 @@
+use crate::boundary_nodes_integration::boundary_nodes::exec_ssh_command;
 use crate::canister_http::lib::get_universal_vm_address;
+use crate::driver::boundary_node::{BoundaryNode, BoundaryNodeVm};
 use crate::driver::ic::{InternetComputer, Subnet};
 use crate::driver::test_env::TestEnv;
 use crate::driver::test_env_api::{
-    HasDependencies, HasPublicApiUrl, HasTopologySnapshot, IcNodeContainer, SubnetSnapshot,
-    TopologySnapshot,
+    HasDependencies, HasPublicApiUrl, HasRegistryLocalStore, HasTopologySnapshot, IcNodeContainer,
+    SubnetSnapshot, TopologySnapshot,
 };
+use crate::driver::test_env_api::{READY_WAIT_TIMEOUT, RETRY_BACKOFF};
 use crate::driver::universal_vm::UniversalVm;
+use anyhow::bail;
 use ic_registry_routing_table::canister_id_into_u64;
 use ic_registry_subnet_features::SubnetFeatures;
 use ic_registry_subnet_type::SubnetType;
@@ -15,26 +19,22 @@ use std::process::{Command, Stdio};
 
 pub const UNIVERSAL_VM_NAME: &str = "httpbin";
 
+const BOUNDARY_NODE_NAME: &str = "boundary-node-1";
+
 const REPLICATION_FACTOR: usize = 2;
 
 const EXCLUDED: &[&str] = &[
     // to start with something that is always false
     "(1 == 0)",
-    // tECDSA is not enabled in the test yet
-    "$0 ~ /tECDSA/",
     // the replica does not yet check that the effective canister id is valid in all cases
     "$0 ~ /wrong effective canister id.in mangement call/",
     "$0 ~ /access denied with different effective canister id/",
-    // the replica does not implement proofs of path non-existence
-    "$0 ~ /non-existence proofs for non-existing request id/",
-    "$0 ~ /module_hash of empty canister/",
-    "$0 ~ /metadata.absent/",
     // Recursive calls from queries are now allowed.
     // When composite queries are enabled, we should clean up and re-enable this test
     "$0 ~ /Call from query method traps (in query call)/",
-    // TODO(EXC-350): enable these two tests
-    "$0 ~ /invalid_canister_export.wat/",
-    "$0 ~ /invalid_empty_query_name.wat/",
+    // Temporarily exclude "msg_caller traps" until the spec compliance test
+    // suite is migrated to the IC repo.
+    "$0 ~ /msg_caller traps/",
 ];
 
 pub fn config_impl(env: TestEnv) {
@@ -76,6 +76,20 @@ pub fn config_impl(env: TestEnv) {
         )
         .setup_and_start(&env)
         .expect("failed to setup IC under test");
+    BoundaryNode::new(String::from(BOUNDARY_NODE_NAME))
+        .allocate_vm(&env)
+        .expect("Allocation of BoundaryNode failed.")
+        .for_ic(&env, "")
+        .use_ipv6_certs()
+        .with_registry_local_store(
+            std::fs::canonicalize(
+                env.registry_local_store_path("")
+                    .expect("failed to obtain path to registry local store"),
+            )
+            .expect("failed to derive absolute path to registry local store"),
+        )
+        .start(&env)
+        .expect("failed to setup BoundaryNode VM");
     env.topology_snapshot().subnets().for_each(|subnet| {
         subnet
             .nodes()
@@ -109,6 +123,25 @@ pub fn config_impl(env: TestEnv) {
         })
     })
     .expect("Httpbin server should respond to incoming requests!");
+    // TODO(VER-2435): clean up the remaining code in this function
+    let boundary_node = env
+        .get_deployed_boundary_node(BOUNDARY_NODE_NAME)
+        .unwrap()
+        .get_snapshot()
+        .unwrap();
+    retry(env.logger(), READY_WAIT_TIMEOUT, RETRY_BACKOFF, || {
+        if let Ok(true) = boundary_node.status_is_healthy() {
+            Ok(())
+        } else {
+            exec_ssh_command(
+                &boundary_node,
+                "sudo systemctl restart control-plane.service",
+            )
+            .expect("Could not restart control-plane.service");
+            bail!("BN didn't report healthy, control-plane.service restarted")
+        }
+    })
+    .expect("BN did not come up!");
 }
 
 fn find_subnet(
@@ -143,7 +176,7 @@ pub fn test_subnet(
     let webserver_ipv6 = get_universal_vm_address(&env);
     let httpbin = format!("[{webserver_ipv6}]:20443");
     let ic_ref_test_path = env
-        .get_dependency_path("rs/tests/ic-hs/ic-ref-test")
+        .get_dependency_path("rs/tests/ic-hs/bin/ic-ref-test")
         .into_os_string()
         .into_string()
         .unwrap();
@@ -163,7 +196,7 @@ pub fn test_subnet(
 
 fn subnet_config(subnet: &SubnetSnapshot) -> String {
     format!(
-        "(\"{}\",{},{},[{}])",
+        "(\"{}\",{},{},[{}],[{}])",
         subnet.subnet_id,
         match subnet.subnet_type() {
             SubnetType::VerifiedApplication => "verified_application",
@@ -180,6 +213,11 @@ fn subnet_config(subnet: &SubnetSnapshot) -> String {
                 canister_id_into_u64(r.end)
             ))
             .collect::<Vec<String>>()
+            .join(","),
+        subnet
+            .nodes()
+            .map(|n| format!("\"{}\"", n.get_public_url()))
+            .collect::<Vec<String>>()
             .join(",")
     )
 }
@@ -194,7 +232,11 @@ pub fn with_endpoint(
     excluded_tests: Vec<&str>,
     included_tests: Vec<&str>,
 ) {
-    let node = test_subnet.nodes().next().unwrap();
+    let boundary_node = env
+        .get_deployed_boundary_node(BOUNDARY_NODE_NAME)
+        .unwrap()
+        .get_snapshot()
+        .unwrap();
     let test_subnet_config = subnet_config(&test_subnet);
     let peer_subnet_config = subnet_config(&peer_subnet);
     info!(log, "test-subnet-config: {}", test_subnet_config);
@@ -204,17 +246,19 @@ pub fn with_endpoint(
             "IC_TEST_DATA",
             env.get_dependency_path("rs/tests/ic-hs/test-data"),
         )
-        .arg("-j20")
+        .arg("-j16")
         .arg("--pattern")
         .arg(tests_to_pattern(excluded_tests, included_tests))
         .arg("--endpoint")
-        .arg(node.get_public_url().to_string())
+        .arg(boundary_node.get_public_url().to_string())
         .arg("--httpbin")
         .arg(&httpbin)
         .arg("--test-subnet-config")
         .arg(test_subnet_config)
         .arg("--peer-subnet-config")
         .arg(peer_subnet_config)
+        .arg("--allow-self-signed-certs")
+        .arg("True")
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()

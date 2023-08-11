@@ -1,9 +1,8 @@
 use crate::timestamp::TimeStamp;
 use crate::tokens::{TokensType, Zero};
 use serde::{Deserialize, Serialize};
-use std::cmp::Reverse;
 use std::collections::btree_map::Entry;
-use std::collections::{BTreeMap, BinaryHeap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::marker::PhantomData;
 
 #[cfg(test)]
@@ -53,6 +52,10 @@ pub trait Approvals {
         amount: Self::Tokens,
         now: TimeStamp,
     ) -> Result<Self::Tokens, InsufficientAllowance<Self::Tokens>>;
+
+    /// Returns a vector of pairs (account, spender) of size min(n, approvals_size)
+    /// that represent approvals selected for trimming.
+    fn select_approvals_to_trim(&self, n: usize) -> Vec<(Self::AccountId, Self::AccountId)>;
 }
 
 #[allow(clippy::len_without_is_empty)]
@@ -83,7 +86,7 @@ where
     K: Ord,
 {
     allowances: BTreeMap<K, Allowance<Tokens>>,
-    expiration_queue: BinaryHeap<Reverse<(TimeStamp, K)>>,
+    expiration_queue: BTreeSet<(TimeStamp, K)>,
     #[serde(skip)]
     #[serde(default)]
     _marker: PhantomData<fn(&AccountId, &AccountId) -> K>,
@@ -102,7 +105,7 @@ where
     pub fn new() -> Self {
         Self {
             allowances: BTreeMap::new(),
-            expiration_queue: BinaryHeap::new(),
+            expiration_queue: BTreeSet::new(),
             _marker: PhantomData,
         }
     }
@@ -111,6 +114,7 @@ where
 impl<K, AccountId, Tokens> Approvals for AllowanceTable<K, AccountId, Tokens>
 where
     K: Ord + for<'a> From<(&'a AccountId, &'a AccountId)> + Clone,
+    K: Into<(AccountId, AccountId)>,
     AccountId: std::cmp::PartialEq,
     Tokens: TokensType,
 {
@@ -153,6 +157,9 @@ where
 
         match self.allowances.entry(key.clone()) {
             Entry::Vacant(e) => {
+                if amount == Tokens::zero() {
+                    return Ok(amount);
+                }
                 if let Some(expected_allowance) = expected_allowance {
                     if !expected_allowance.is_zero() {
                         return Err(ApproveError::AllowanceChanged {
@@ -161,7 +168,7 @@ where
                     }
                 }
                 if let Some(expires_at) = expires_at {
-                    self.expiration_queue.push(Reverse((expires_at, key)));
+                    self.expiration_queue.insert((expires_at, key));
                 }
                 e.insert(Allowance { amount, expires_at });
                 Ok(amount)
@@ -175,12 +182,22 @@ where
                         });
                     }
                 }
+                if amount == Tokens::zero() {
+                    if let Some(expires_at) = e.get().expires_at {
+                        self.expiration_queue.remove(&(expires_at, key.clone()));
+                    }
+                    e.remove();
+                    return Ok(amount);
+                }
                 allowance.amount = amount;
                 let old_expiration = std::mem::replace(&mut allowance.expires_at, expires_at);
 
                 if expires_at != old_expiration {
+                    if let Some(old_expiration) = old_expiration {
+                        self.expiration_queue.remove(&(old_expiration, key.clone()));
+                    }
                     if let Some(expires_at) = expires_at {
-                        self.expiration_queue.push(Reverse((expires_at, key)));
+                        self.expiration_queue.insert((expires_at, key));
                     }
                 }
                 Ok(e.get().amount)
@@ -197,7 +214,7 @@ where
     ) -> Result<Tokens, InsufficientAllowance<Tokens>> {
         let key = K::from((account, spender));
 
-        match self.allowances.entry(key) {
+        match self.allowances.entry(key.clone()) {
             Entry::Vacant(_) => Err(InsufficientAllowance(Tokens::zero())),
             Entry::Occupied(mut e) => {
                 if e.get().expires_at.unwrap_or_else(remote_future) <= now {
@@ -213,12 +230,26 @@ where
                         .expect("Underflow when using allowance");
                     let rest = allowance.amount;
                     if rest.is_zero() {
+                        if let Some(expires_at) = e.get().expires_at {
+                            self.expiration_queue.remove(&(expires_at, key));
+                        }
                         e.remove();
                     }
                     Ok(rest)
                 }
             }
         }
+    }
+
+    fn select_approvals_to_trim(&self, n: usize) -> Vec<(Self::AccountId, Self::AccountId)> {
+        let mut result = vec![];
+        for key in self.allowances.keys() {
+            if result.len() >= n {
+                break;
+            }
+            result.push(key.clone().into());
+        }
+        result
     }
 }
 
@@ -229,9 +260,8 @@ where
     fn prune(&mut self, now: TimeStamp, limit: usize) -> usize {
         let mut pruned = 0;
         for _ in 0..limit {
-            match self.expiration_queue.peek() {
-                Some(Reverse((ts, _key))) => {
-                    println!("{:?}", ts);
+            match self.expiration_queue.first() {
+                Some((ts, _key)) => {
                     if *ts > now {
                         return pruned;
                     }
@@ -240,7 +270,7 @@ where
                     return pruned;
                 }
             }
-            if let Some(Reverse((_, key))) = self.expiration_queue.pop() {
+            if let Some((_, key)) = self.expiration_queue.pop_first() {
                 if let Some(allowance) = self.allowances.get(&key) {
                     if allowance.expires_at.unwrap_or_else(remote_future) <= now {
                         self.allowances.remove(&key);
@@ -253,6 +283,12 @@ where
     }
 
     fn len(&self) -> usize {
+        debug_assert!(
+            self.expiration_queue.len() <= self.allowances.len(),
+            "expiration queue length ({}) larger than allowances length ({})",
+            self.expiration_queue.len(),
+            self.allowances.len()
+        );
         self.allowances.len()
     }
 }

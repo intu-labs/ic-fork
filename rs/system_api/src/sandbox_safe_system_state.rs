@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::routing::ResolveDestinationError;
+use crate::{routing::ResolveDestinationError, ApiType};
 use ic_base_types::{CanisterId, NumBytes, NumSeconds, PrincipalId, SubnetId};
 use ic_constants::{LOG_CANISTER_OPERATION_CYCLES_THRESHOLD, SMALL_APP_SUBNET_MAX_SIZE};
 use ic_cycles_account_manager::{CyclesAccountManager, CyclesAccountManagerError};
@@ -268,10 +268,7 @@ impl SystemStateChanges {
     ) -> HypervisorResult<()> {
         // Verify total cycle change is not positive and update cycles balance.
         self.validate_cycle_change(system_state.canister_id == CYCLES_MINTING_CANISTER_ID)?;
-        let consumed_cycles = self.apply_balance_changes(system_state);
-
-        // Observe consumed cycles.
-        system_state.observe_consumed_cycles(consumed_cycles);
+        self.apply_balance_changes(system_state);
 
         // Verify we don't accept more cycles than are available from each call
         // context and update each call context balance
@@ -425,43 +422,44 @@ impl SystemStateChanges {
         Ok(())
     }
 
-    /// Applies the balance change to the given state.
-    pub fn apply_balance_changes(&self, state: &mut SystemState) -> Cycles {
-        let balance_before = state.balance();
-        let mut removed_consumed_cycles = Cycles::new(0);
-        for (use_case, amount) in self.consumed_cycles_by_use_case.iter() {
-            state.remove_cycles(*amount, *use_case);
-            removed_consumed_cycles += *amount;
+    /// Returns `self.cycles_balance_change` without cycles that are accounted
+    /// for in `self.consumed_cycles_by_use_case`.
+    fn cycles_balance_change_without_consumed_cycles_by_use_case(&self) -> CyclesBalanceChange {
+        // `self.cycles_balance_change` consists of:
+        // - CyclesBalanceChange::added(cycles_accepted_from_the_call_context)
+        // - CyclesBalanceChange::remove(cycles_sent_via_outgoing_calls)
+        // - CyclesBalanceChange::remove(cycles_consumed_by_various_fees)
+        // This loop removes the last part from `self.cycles_balance_change`.
+        let mut result = self.cycles_balance_change;
+        for (_use_case, amount) in self.consumed_cycles_by_use_case.iter() {
+            result = result + CyclesBalanceChange::added(*amount)
         }
+        result
+    }
 
-        // The final balance of the canister should reflect `cycles_balance_change`.
-        // Since we removed `removed_consumed_cycles` above, we need to add it back
-        // to the `cycles_balance_change` to make sure the final balance of the canister is correct.
-        match self.cycles_balance_change {
+    /// Applies the balance change to the given state.
+    pub fn apply_balance_changes(&self, state: &mut SystemState) {
+        let initial_balance = state.balance();
+        let non_consumed_cycles_change =
+            self.cycles_balance_change_without_consumed_cycles_by_use_case();
+        match non_consumed_cycles_change {
             CyclesBalanceChange::Added(added) => {
-                // When 'cycles_balance_change' is positive we should add 'removed_consumed_cycles'.
-                state.add_cycles(added + removed_consumed_cycles, CyclesUseCase::NonConsumed);
-                debug_assert_eq!(balance_before + added, state.balance());
+                state.add_cycles(added, CyclesUseCase::NonConsumed)
             }
             CyclesBalanceChange::Removed(removed) => {
-                // When 'cycles_balance_change' is negative we are adding 'removed_consumed_cycles'
-                // but additionaly we should take care about the sign of the sum, which will
-                // determine whether we are adding or removing cycles from the balance.
-                if removed_consumed_cycles > removed {
-                    state.add_cycles(
-                        removed_consumed_cycles - removed,
-                        CyclesUseCase::NonConsumed,
-                    );
-                } else {
-                    state.remove_cycles(
-                        removed - removed_consumed_cycles,
-                        CyclesUseCase::NonConsumed,
-                    );
-                }
-                debug_assert_eq!(balance_before - removed, state.balance());
+                state.remove_cycles(removed, CyclesUseCase::NonConsumed)
             }
         }
-        removed_consumed_cycles
+        for (use_case, amount) in self.consumed_cycles_by_use_case.iter() {
+            state.remove_cycles(*amount, *use_case);
+        }
+        // All changes applied above should be equivalent to simply applying
+        // `self.cycles_balance_change` to the initial balance.
+        let expected_balance = match self.cycles_balance_change {
+            CyclesBalanceChange::Added(added) => initial_balance + added,
+            CyclesBalanceChange::Removed(removed) => initial_balance - removed,
+        };
+        assert_eq!(state.balance(), expected_balance);
     }
 
     fn add_consumed_cycles(&mut self, consumed_cycles: &[(CyclesUseCase, Cycles)]) {
@@ -501,7 +499,9 @@ pub struct SandboxSafeSystemState {
     dirty_page_overhead: NumInstructions,
     freeze_threshold: NumSeconds,
     memory_allocation: MemoryAllocation,
+    compute_allocation: ComputeAllocation,
     initial_cycles_balance: Cycles,
+    reserved_balance: Cycles,
     call_context_balances: BTreeMap<CallContextId, Cycles>,
     cycles_account_manager: CyclesAccountManager,
     // None indicates that we are in a context where the canister cannot
@@ -525,7 +525,9 @@ impl SandboxSafeSystemState {
         status: CanisterStatusView,
         freeze_threshold: NumSeconds,
         memory_allocation: MemoryAllocation,
+        compute_allocation: ComputeAllocation,
         initial_cycles_balance: Cycles,
+        reserved_balance: Cycles,
         call_context_balances: BTreeMap<CallContextId, Cycles>,
         cycles_account_manager: CyclesAccountManager,
         next_callback_id: Option<u64>,
@@ -546,8 +548,10 @@ impl SandboxSafeSystemState {
             dirty_page_overhead,
             freeze_threshold,
             memory_allocation,
+            compute_allocation,
             system_state_changes: SystemStateChanges::default(),
             initial_cycles_balance,
+            reserved_balance,
             call_context_balances,
             cycles_account_manager,
             next_callback_id,
@@ -565,6 +569,7 @@ impl SandboxSafeSystemState {
         cycles_account_manager: CyclesAccountManager,
         network_topology: &NetworkTopology,
         dirty_page_overhead: NumInstructions,
+        compute_allocation: ComputeAllocation,
     ) -> Self {
         let call_context_balances = match system_state.call_context_manager() {
             Some(call_context_manager) => call_context_manager
@@ -603,7 +608,9 @@ impl SandboxSafeSystemState {
             CanisterStatusView::from_full_status(&system_state.status),
             system_state.freeze_threshold,
             system_state.memory_allocation,
+            compute_allocation,
             system_state.balance(),
+            system_state.reserved_balance(),
             call_context_balances,
             cycles_account_manager,
             system_state
@@ -785,7 +792,6 @@ impl SandboxSafeSystemState {
     pub(super) fn withdraw_cycles_for_transfer(
         &mut self,
         canister_current_memory_usage: NumBytes,
-        compute_allocation: ComputeAllocation,
         amount: Cycles,
     ) -> HypervisorResult<()> {
         let mut new_balance = self.cycles_balance();
@@ -796,10 +802,11 @@ impl SandboxSafeSystemState {
                 self.freeze_threshold,
                 self.memory_allocation,
                 canister_current_memory_usage,
-                compute_allocation,
+                self.compute_allocation,
                 &mut new_balance,
                 amount,
                 self.subnet_size,
+                self.reserved_balance,
             )
             .map_err(HypervisorError::InsufficientCyclesBalance);
         self.update_balance_change(new_balance);
@@ -810,7 +817,6 @@ impl SandboxSafeSystemState {
     pub fn push_output_request(
         &mut self,
         canister_current_memory_usage: NumBytes,
-        compute_allocation: ComputeAllocation,
         msg: Request,
         prepayment_for_response_execution: Cycles,
         prepayment_for_response_transmission: Cycles,
@@ -822,11 +828,12 @@ impl SandboxSafeSystemState {
             self.freeze_threshold,
             self.memory_allocation,
             canister_current_memory_usage,
-            compute_allocation,
+            self.compute_allocation,
             &msg,
             prepayment_for_response_execution,
             prepayment_for_response_transmission,
             self.subnet_size,
+            self.reserved_balance,
         ) {
             Ok(consumed_cycles) => consumed_cycles,
             Err(_) => return Err(msg),
@@ -873,6 +880,84 @@ impl SandboxSafeSystemState {
 
     pub fn is_controller(&self, principal_id: &PrincipalId) -> bool {
         self.controllers.contains(principal_id)
+    }
+
+    /// Checks the cycles balance against the freezing threshold with the new
+    /// memory usage if that's needed for the given API type.
+    ///
+    /// If the old memory usage is higher than the new memory usage, then
+    /// no check is performed.
+    ///
+    /// Returns `Err(HypervisorError::InsufficientCyclesInMemoryGrow)` if the
+    /// canister would become frozen with the new memory usage.
+    /// Otherwise, returns `Ok(())`.
+    pub(super) fn check_freezing_threshold_for_memory_grow(
+        &self,
+        api_type: &ApiType,
+        old_memory_usage: NumBytes,
+        new_memory_usage: NumBytes,
+    ) -> HypervisorResult<()> {
+        let should_check = self.should_check_freezing_threshold_for_memory_grow(api_type);
+        if !should_check || old_memory_usage >= new_memory_usage {
+            return Ok(());
+        }
+        match self.memory_allocation {
+            MemoryAllocation::Reserved(limit) if new_memory_usage <= limit => Ok(()),
+            MemoryAllocation::Reserved(_) | MemoryAllocation::BestEffort => {
+                // Note that currently the memory usage of a canister cannot
+                // exceed its reserved limit. The `Reserved(_)` case is
+                // actually unreachable here, but we still handle it to keep
+                // this code robust.
+                let threshold = self.cycles_account_manager.freeze_threshold_cycles(
+                    self.freeze_threshold,
+                    self.memory_allocation,
+                    new_memory_usage,
+                    self.compute_allocation,
+                    self.subnet_size,
+                    self.reserved_balance,
+                );
+                if self.cycles_balance() >= threshold {
+                    Ok(())
+                } else {
+                    Err(HypervisorError::InsufficientCyclesInMemoryGrow {
+                        bytes: new_memory_usage - old_memory_usage,
+                        available: self.cycles_balance(),
+                        threshold,
+                    })
+                }
+            }
+        }
+    }
+
+    // Returns `true` if the freezing threshold needs to be checked for the given
+    // API type when growing memory.
+    fn should_check_freezing_threshold_for_memory_grow(&self, api_type: &ApiType) -> bool {
+        match api_type {
+            ApiType::Update { .. } | ApiType::SystemTask { .. } => true,
+
+            ApiType::Start { .. } | ApiType::Init { .. } | ApiType::PreUpgrade { .. } => {
+                // Individual endpoints of install_code do not check the
+                // freezing threshold. Instead, it is checked at the end of
+                // install_code.
+                false
+            }
+
+            ApiType::InspectMessage { .. }
+            | ApiType::ReplicatedQuery { .. }
+            | ApiType::NonReplicatedQuery { .. } => {
+                // Queries do not check the freezing threshold because the state
+                // changes are disarded anyways.
+                false
+            }
+
+            ApiType::ReplyCallback { .. }
+            | ApiType::RejectCallback { .. }
+            | ApiType::Cleanup { .. } => {
+                // Response callbacks are specified to not check the freezing
+                // threshold.
+                false
+            }
+        }
     }
 }
 

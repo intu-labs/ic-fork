@@ -4,7 +4,6 @@ use crate::{
         manage_neuron_request::neuron_mutation::{
             GovernanceMutationProxy, GovernanceNeuronMutation, NeuronDeltas,
         },
-        subaccount_from_slice,
     },
     pb::v1::{governance_error::ErrorType, GovernanceError},
 };
@@ -39,10 +38,10 @@ impl GovernanceNeuronMutation for BurnFeesMutation {
         }
 
         Ok(btreemap! {
-            self.neuron_id.clone() => NeuronDeltas {
+            self.neuron_id => NeuronDeltas {
             neuron_fees_e8s: (neuron_fees as i128).neg(),
             cached_neuron_stake_e8s: (neuron_fees as i128).neg(),
-            aging_timestamp_seconds: 0,
+            aging_since_timestamp_seconds: 0,
             dissolve_delay: 0,
             maturity_e8s_equivalent: 0,
             staked_maturity_e8s_equivalent: 0,
@@ -89,12 +88,7 @@ impl GovernanceNeuronMutation for BurnFeesMutation {
         let amount_to_subtract = change_amount.saturating_abs();
 
         let neuron = gov.get_neuron(&self.neuron_id)?;
-        let from_subaccount = subaccount_from_slice(&neuron.account)?.ok_or_else(|| {
-            GovernanceError::new_with_message(
-                ErrorType::InvalidCommand,
-                "Subaccount of source neuron is not valid",
-            )
-        })?;
+        let from_subaccount = neuron.subaccount()?;
 
         let _result = gov
             .ledger

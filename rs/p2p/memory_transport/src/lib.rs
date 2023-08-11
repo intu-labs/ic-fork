@@ -277,10 +277,10 @@ fn response_size(r: &Response<Bytes>) -> usize {
 impl Transport for PeerTransport {
     async fn rpc(
         &self,
-        peer: &NodeId,
+        peer_id: &NodeId,
         mut request: Request<Bytes>,
     ) -> Result<Response<Bytes>, TransportError> {
-        if peer == &self.node_id {
+        if peer_id == &self.node_id {
             return Err(TransportError::Disconnected {
                 connection_error: Some("Can't connect to self".to_string()),
             });
@@ -289,42 +289,18 @@ impl Transport for PeerTransport {
         let (oneshot_tx, oneshot_rx) = oneshot::channel();
         request.extensions_mut().insert(self.node_id);
         self.router_request_tx
-            .send((request, *peer, oneshot_tx))
+            .send((request, *peer_id, oneshot_tx))
             .unwrap();
         Ok(oneshot_rx.await.unwrap())
     }
 
-    /// Unreliable broadcast to all peers that transport currently is connected to.
-    fn broadcast(&self, request: Request<Bytes>) {
-        // The request will be cloned here and if there is an extension attached it can't be cloned.
-        assert!(request.extensions().is_empty());
+    async fn push(&self, peer_id: &NodeId, request: Request<Bytes>) -> Result<(), TransportError> {
+        let _ = self.rpc(peer_id, request).await?;
+        Ok(())
+    }
 
-        let (parts, body) = request.into_parts();
-
-        for (peer, _) in self.global.peers.read().unwrap().iter() {
-            if peer == &self.node_id {
-                continue;
-            }
-
-            let mut request = Request::builder()
-                .method(parts.method.clone())
-                .uri(parts.uri.clone())
-                .version(parts.version)
-                .body(body.clone())
-                .unwrap();
-            request.headers_mut().extend(parts.headers.clone());
-            request.extensions_mut().insert(self.node_id);
-
-            let router_request_tx = self.router_request_tx.clone();
-            let self_node = self.node_id;
-            let dest_peer = *peer;
-            let _ = tokio::spawn(async move {
-                let (oneshot_tx, oneshot_rx) = oneshot::channel();
-                request.extensions_mut().insert(self_node);
-                let _ = router_request_tx.send((request, dest_peer, oneshot_tx));
-                let _ = oneshot_rx.await;
-            });
-        }
+    fn peers(&self) -> Vec<NodeId> {
+        self.global.peers.read().unwrap().keys().cloned().collect()
     }
 }
 

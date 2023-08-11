@@ -1,7 +1,7 @@
 use super::*;
 
 use crate::sign::basic_sig::BasicSigVerifierInternal;
-use crate::sign::basic_sig::{BasicSignVerifierByPublicKeyInternal, BasicSignerInternal};
+use crate::sign::basic_sig::BasicSignerInternal;
 use crate::sign::multi_sig::MultiSigVerifierInternal;
 use crate::sign::multi_sig::MultiSignerInternal;
 use crate::sign::threshold_sig::{ThresholdSigVerifierInternal, ThresholdSignerInternal};
@@ -37,7 +37,6 @@ pub use threshold_sig::ThresholdSigDataStore;
 pub use threshold_sig::ThresholdSigDataStoreImpl;
 
 mod basic_sig;
-mod canister_sig;
 mod canister_threshold_sig;
 mod multi_sig;
 mod threshold_sig;
@@ -51,6 +50,7 @@ mod tests;
 // TODO: Remove this indirection:
 pub(crate) use ic_crypto_internal_csp::imported_utilities::sign_utils as utils;
 use ic_crypto_internal_logmon::metrics::{MetricsDomain, MetricsResult, MetricsScope};
+use ic_types::crypto::threshold_sig::IcRootOfTrust;
 use ic_types::signature::BasicSignatureBatch;
 
 impl<C: CryptoServiceProvider, H: Signable> BasicSigner<H> for CryptoComponentImpl<C> {
@@ -239,11 +239,11 @@ impl<C: CryptoServiceProvider, S: Signable> BasicSigVerifierByPublicKey<S>
         );
         let start_time = self.metrics.now();
         let metrics_label = format!("verify_basic_sig_by_public_key_{}", public_key.algorithm_id);
-        let result = BasicSignVerifierByPublicKeyInternal::verify_basic_sig_by_public_key(
-            &self.csp,
-            signature,
-            signed_bytes,
-            public_key,
+        let result = ic_crypto_standalone_sig_verifier::verify_basic_sig_by_public_key(
+            public_key.algorithm_id,
+            &signed_bytes.as_signed_bytes(),
+            &signature.get_ref().0,
+            &public_key.key,
         );
         self.metrics.observe_duration_seconds(
             MetricsDomain::BasicSignature,
@@ -657,7 +657,7 @@ impl<C: CryptoServiceProvider, S: Signable> CanisterSigVerifier<S> for CryptoCom
         signature: &CanisterSigOf<S>,
         signed_bytes: &S,
         public_key: &UserPublicKey,
-        registry_version: RegistryVersion,
+        root_of_trust: &IcRootOfTrust,
     ) -> CryptoResult<()> {
         let log_id = get_log_id(&self.logger, module_path!());
         let logger = new_logger!(&self.logger;
@@ -669,16 +669,15 @@ impl<C: CryptoServiceProvider, S: Signable> CanisterSigVerifier<S> for CryptoCom
             crypto.description => "start",
             crypto.signed_bytes => format!("0x{}", hex::encode(signed_bytes.as_signed_bytes())),
             crypto.public_key => format!("{}", public_key),
-            crypto.registry_version => registry_version.get(),
             crypto.signature => format!("{:?}", signature),
         );
         let start_time = self.metrics.now();
-        let result = canister_sig::verify_canister_sig(
-            self.registry_client.as_ref(),
-            signature,
-            signed_bytes,
-            public_key,
-            registry_version,
+        ensure_ic_canister_signature(public_key.algorithm_id)?;
+        let result = ic_crypto_standalone_sig_verifier::verify_canister_sig(
+            &signed_bytes.as_signed_bytes(),
+            &signature.get_ref().0,
+            &public_key.key,
+            root_of_trust,
         );
 
         // Processing of the cache statistics for metrics is deliberatly
@@ -850,6 +849,16 @@ fn log_err<T: fmt::Display>(error_option: Option<&T>) -> String {
         return format!("{}", error);
     }
     "none".to_string()
+}
+
+fn ensure_ic_canister_signature(algorithm_id: AlgorithmId) -> CryptoResult<()> {
+    if algorithm_id != AlgorithmId::IcCanisterSignature {
+        return Err(CryptoError::AlgorithmNotSupported {
+            algorithm: algorithm_id,
+            reason: format!("Expected {:?}", AlgorithmId::IcCanisterSignature),
+        });
+    }
+    Ok(())
 }
 
 pub fn log_ok_content<T: fmt::Display, E>(result: &Result<T, E>) -> String {

@@ -7,23 +7,22 @@ if [ -n "${IN_NIX_SHELL:-}" ]; then
 fi
 
 if [ -e /run/.containerenv ]; then
-    echo "Nested $0 is not supported!" >&2
+    echo "Nested $0 is not supported." >&2
     exit 1
 fi
 
 if ! which podman >/dev/null 2>&1; then
-    echo "Podman missing...install it!" >&2
+    echo "Podman missing...install it." >&2
     exit 1
 fi
 
 usage() {
     cat <<EOF
-Container Dev & Build Environment Script.
+Usage: $0 -h | --help, -f | --full, -c <dir> | --cache-dir <dir>
 
-Usage: $0 -h | --help, -f | --full
-
-    -f | --full  Use full container image (dfinity/ic-build-legacy)
-    -h | --help  Print help
+    -f | --full             Use full container image (dfinity/ic-build-legacy)
+    -c | --cache-dir <dir>  Bind-mount custom cache dir instead of '~/.cache'
+    -h | --help             Print help
 
 Script uses dfinity/ic-build image by default.
 EOF
@@ -35,9 +34,25 @@ CTR=0
 while test $# -gt $CTR; do
     case "$1" in
         -h | --help) usage && exit 0 ;;
+        -c | --cache-dir)
+            if [[ $# -gt "$CTR + 1" ]]; then
+                if [ ! -d "$2" ]; then
+                    echo "$2 is not a directory! Create it and try again."
+                    usage && exit 1
+                fi
+                CACHE_DIR="$2"
+                echo "Bind-mounting $CACHE_DIR as cache directory."
+            else
+                echo "Missing argument for -c | --cache-dir!"
+                usage && exit 1
+            fi
+            shift
+            shift
+            ;;
         -f | --full)
             IMAGE="docker.io/dfinity/ic-build-legacy"
             BUILD_ARGS=()
+            echo "Using docker.io/dfinity/ic-build-legacy image."
             shift
             ;;
         *) let CTR=CTR+1 ;;
@@ -88,7 +103,7 @@ fi
 PODMAN_RUN_ARGS+=(
     --mount type=bind,source="${REPO_ROOT}",target="${WORKDIR}"
     --mount type=bind,source="${HOME}",target="${HOME}"
-    --mount type=bind,source="${HOME}/.cache",target="/home/ubuntu/.cache"
+    --mount type=bind,source="${CACHE_DIR:-${HOME}/.cache}",target="/home/ubuntu/.cache"
     --mount type=bind,source="${HOME}/.ssh",target="/home/ubuntu/.ssh"
     --mount type=bind,source="${HOME}/.aws",target="/home/ubuntu/.aws"
     --mount type=bind,source="/var/lib/containers",target="/var/lib/containers"
@@ -96,6 +111,12 @@ PODMAN_RUN_ARGS+=(
 )
 
 if [ "$(id -u)" = "1000" ]; then
+    if [ -e "${HOME}/.gitconfig" ]; then
+        PODMAN_RUN_ARGS+=(
+            --mount type=bind,source="${HOME}/.gitconfig",target="/home/ubuntu/.gitconfig"
+        )
+    fi
+
     if [ -e "${HOME}/.bash_history" ]; then
         PODMAN_RUN_ARGS+=(
             --mount type=bind,source="${HOME}/.bash_history",target="/home/ubuntu/.bash_history"
@@ -130,16 +151,25 @@ fi
 # make sure we have all bind-mounts
 mkdir -p ~/.{aws,ssh,cache,local/share/fish} && touch ~/.{zsh,bash}_history
 
+PODMAN_RUN_USR_ARGS=()
+if [ -f "$HOME/.container-run.conf" ]; then
+    # conf file with user's custom PODMAN_RUN_USR_ARGS
+    echo "Sourcing user's ~/.container-run.conf"
+    source "$HOME/.container-run.conf"
+fi
+
 # privileged rootful podman is required due to requirements of IC-OS guest build
 # additionally, we need to use hosts's cgroups and network
 if [ $# -eq 0 ]; then
     set -x
     sudo podman run --pids-limit=-1 -it --rm --privileged --network=host --cgroupns=host \
-        "${PODMAN_RUN_ARGS[@]}" -w "$WORKDIR" "$IMAGE" ${USHELL:-/usr/bin/bash}
+        "${PODMAN_RUN_ARGS[@]}" ${PODMAN_RUN_USR_ARGS[@]} -w "$WORKDIR" \
+        "$IMAGE" ${USHELL:-/usr/bin/bash}
     set +x
 else
     set -x
     sudo podman run --pids-limit=-1 -it --rm --privileged --network=host --cgroupns=host \
-        "${PODMAN_RUN_ARGS[@]}" -w "$WORKDIR" "$IMAGE" "$@"
+        "${PODMAN_RUN_ARGS[@]}" "${PODMAN_RUN_USR_ARGS[@]}" -w "$WORKDIR" \
+        "$IMAGE" "$@"
     set +x
 fi

@@ -5,7 +5,7 @@ edition = "2021"
 autotests = false
 
 [dependencies]
-candid = "0.8.1"
+candid = { workspace = true }
 canister-test = { path = "../rust_canisters/canister_test" }
 chrono = "0.4.19"
 clap = { version = "3.1.6", features = ["derive"] }
@@ -20,7 +20,7 @@ ic-base-types = { path = "../types/base_types"}
 ic-canister-client = { path = "../canister_client" }
 ic-config = { path = "../config" }
 ic-crypto = { path = "../crypto" }
-ic-crypto-sha = { path = "../crypto/sha" }
+ic-crypto-sha2 = { path = "../crypto/sha2" }
 ic-interfaces = { path = "../interfaces" }
 ic-logger = { path = "../monitoring/logger" }
 ic-metrics = { path = "../monitoring/metrics" }

@@ -30,14 +30,8 @@ pub fn test(env: TestEnv) {
     let neuron1 = create_neuron(2001, |_| {}, &mut ledger_balances);
     let neuron2 = create_neuron(2002, |_| {}, &mut ledger_balances);
     let mut neurons = HashMap::new();
-    neurons.insert(
-        neuron1.neuron.id.clone().unwrap().id,
-        neuron1.neuron.clone(),
-    );
-    neurons.insert(
-        neuron2.neuron.id.clone().unwrap().id,
-        neuron2.neuron.clone(),
-    );
+    neurons.insert(neuron1.neuron.id.unwrap().id, neuron1.neuron.clone());
+    neurons.insert(neuron2.neuron.id.unwrap().id, neuron2.neuron.clone());
 
     // Create Rosetta and ledger clients.
     let client = setup(&env, PORT, VM_NAME, Some(ledger_balances), Some(neurons));
@@ -241,6 +235,7 @@ async fn test_wrong_key(ros: &RosettaApiClient, _logger: &Logger) {
     let t = Operation::Transfer {
         from: acc_a,
         to: acc_id(1051),
+        spender: None,
         amount: Tokens::from_e8s(100),
         fee: Tokens::from_e8s(TRANSFER_FEE),
     };

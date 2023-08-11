@@ -1,7 +1,7 @@
 //! This module is responsible for validating the wasm binaries that are
 //! installed on the Internet Computer.
 
-use super::{WasmImportsDetails, WasmValidationDetails};
+use super::{Complexity, WasmImportsDetails, WasmValidationDetails};
 
 use ic_config::embedders::Config as EmbeddersConfig;
 use ic_replicated_state::canister_state::execution_state::{
@@ -794,15 +794,13 @@ fn validate_import_section(module: &Module) -> Result<WasmImportsDetails, WasmVa
 // * Validates the signatures of other allowed exported functions (like
 //   `canister_init` or `canister_pre_upgrade`) if present.
 // * Validates that the canister doesn't export any reserved symbols
-//
-// Returns the number of exported functions that are not in the list of
-// allowed exports and whose name starts with the reserved "canister_" prefix.
+// * Validates that all exported functions whose names start
+//   with the reserved "canister_" prefix are in the list of allowed exports.
 fn validate_export_section(
     module: &Module,
     max_number_exported_functions: usize,
     max_sum_exported_function_name_lengths: usize,
-) -> Result<usize, WasmValidationError> {
-    let mut reserved_exports: usize = 0;
+) -> Result<(), WasmValidationError> {
     if !module.exports.is_empty() {
         let num_imported_functions = module
             .imports
@@ -812,6 +810,14 @@ fn validate_export_section(
 
         let mut seen_funcs: HashSet<&str> = HashSet::new();
         let valid_exported_functions = get_valid_exported_functions();
+        let valid_system_functions = vec![
+            "canister_init",
+            "canister_pre_upgrade",
+            "canister_post_upgrade",
+            "canister_inspect_message",
+            "canister_heartbeat",
+            "canister_global_timer",
+        ];
         let mut number_exported_functions = 0;
         let mut sum_exported_function_name_lengths = 0;
         for export in &module.exports {
@@ -848,10 +854,11 @@ fn validate_export_section(
                 } else if func_name.starts_with("canister_") {
                     // The "canister_" prefix is reserved and only functions allowed by the spec
                     // can be exported.
-                    // TODO(EXC-350): Turn this into an actual error once we confirm that no
-                    // reserved functions are exported.
-                    if !valid_exported_functions.contains_key(func_name) {
-                        reserved_exports += 1;
+                    if !valid_system_functions.contains(&func_name) {
+                        return Err(WasmValidationError::InvalidExportSection(format!(
+                            "Exporting reserved function '{}' with \"canister_\" prefix",
+                            func_name
+                        )));
                     }
                 }
                 if let Some(valid_signature) = valid_exported_functions.get(func_name) {
@@ -885,7 +892,7 @@ fn validate_export_section(
             return Err(WasmValidationError::InvalidExportSection(err));
         }
     }
-    Ok(reserved_exports)
+    Ok(())
 }
 
 // Checks that offset-expressions in data sections consist of only one constant
@@ -1083,8 +1090,11 @@ fn validate_custom_section(
     Ok(WasmMetadata::new(validated_custom_sections))
 }
 
-fn validate_code_section(module: &Module) -> Result<NumInstructions, WasmValidationError> {
+fn validate_code_section(
+    module: &Module,
+) -> Result<(NumInstructions, Complexity), WasmValidationError> {
     let mut max_function_size = NumInstructions::new(0);
+    let mut max_complexity = 0;
 
     for (index, func_body) in module.code_sections.iter().enumerate() {
         let size = func_body.instructions.len();
@@ -1112,6 +1122,8 @@ fn validate_code_section(module: &Module) -> Result<NumInstructions, WasmValidat
                 complexity,
                 allowed: WASM_FUNCTION_COMPLEXITY_LIMIT,
             });
+        } else {
+            max_complexity = cmp::max(max_complexity, complexity);
         }
 
         if size > WASM_FUNCTION_SIZE_LIMIT {
@@ -1124,7 +1136,7 @@ fn validate_code_section(module: &Module) -> Result<NumInstructions, WasmValidat
             max_function_size = cmp::max(max_function_size, NumInstructions::new(size as u64));
         }
     }
-    Ok(max_function_size)
+    Ok((max_function_size, Complexity(max_complexity as u64)))
 }
 
 /// Sets Wasmtime flags to ensure deterministic execution.
@@ -1197,7 +1209,7 @@ pub(super) fn validate_wasm_binary<'a>(
     let module = Module::parse(wasm.as_slice(), false)
         .map_err(|err| WasmValidationError::DecodingError(format!("{}", err)))?;
     let imports_details = validate_import_section(&module)?;
-    let reserved_exports = validate_export_section(
+    validate_export_section(
         &module,
         config.max_number_exported_functions,
         config.max_sum_exported_function_name_lengths,
@@ -1205,14 +1217,14 @@ pub(super) fn validate_wasm_binary<'a>(
     validate_data_section(&module)?;
     validate_global_section(&module, config.max_globals)?;
     validate_function_section(&module, config.max_functions)?;
-    let largest_function_instruction_count = validate_code_section(&module)?;
+    let (largest_function_instruction_count, max_complexity) = validate_code_section(&module)?;
     let wasm_metadata = validate_custom_section(&module, config)?;
     Ok((
         WasmValidationDetails {
-            reserved_exports,
             imports_details,
             wasm_metadata,
             largest_function_instruction_count,
+            max_complexity,
         },
         module,
     ))

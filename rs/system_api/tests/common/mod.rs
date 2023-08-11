@@ -5,6 +5,7 @@ use ic_config::{
     embedders::Config as EmbeddersConfig, flag_status::FlagStatus, subnet_config::SchedulerConfig,
 };
 use ic_cycles_account_manager::CyclesAccountManager;
+use ic_ic00_types::IC_00;
 use ic_interfaces::execution_environment::{ExecutionMode, SubnetAvailableMemory};
 use ic_logger::replica_logger::no_op_logger;
 use ic_nns_constants::CYCLES_MINTING_CANISTER_ID;
@@ -23,11 +24,13 @@ use ic_test_utilities::{
 use ic_types::{
     messages::{CallContextId, CallbackId, RejectContext},
     methods::SystemMethod,
-    ComputeAllocation, Cycles, MemoryAllocation, NumInstructions, Time,
+    ComputeAllocation, Cycles, MemoryAllocation, NumInstructions, PrincipalId, Time,
 };
 use maplit::btreemap;
 
 pub const CANISTER_CURRENT_MEMORY_USAGE: NumBytes = NumBytes::new(0);
+
+const SUBNET_MEMORY_CAPACITY: i64 = i64::MAX / 2;
 
 pub fn execution_parameters() -> ExecutionParameters {
     ExecutionParameters {
@@ -41,6 +44,8 @@ pub fn execution_parameters() -> ExecutionParameters {
         compute_allocation: ComputeAllocation::default(),
         subnet_type: SubnetType::Application,
         execution_mode: ExecutionMode::Replicated,
+        subnet_memory_capacity: NumBytes::new(SUBNET_MEMORY_CAPACITY as u64),
+        subnet_memory_threshold: NumBytes::new(SUBNET_MEMORY_CAPACITY as u64),
     }
 }
 
@@ -84,6 +89,7 @@ impl ApiTypeBuilder {
 
     pub fn build_system_task_api() -> ApiType {
         ApiType::system_task(
+            IC_00.get(),
             SystemMethod::CanisterHeartbeat,
             mock_time(),
             CallContextId::from(1),
@@ -93,6 +99,7 @@ impl ApiTypeBuilder {
     pub fn build_reply_api(incoming_cycles: Cycles) -> ApiType {
         ApiType::reply_callback(
             mock_time(),
+            PrincipalId::new_anonymous(),
             vec![],
             incoming_cycles,
             CallContextId::new(1),
@@ -104,6 +111,7 @@ impl ApiTypeBuilder {
     pub fn build_reject_api(reject_context: RejectContext) -> ApiType {
         ApiType::reject_callback(
             mock_time(),
+            PrincipalId::new_anonymous(),
             reject_context,
             Cycles::zero(),
             call_context_test_id(1),
@@ -123,13 +131,18 @@ pub fn get_system_api(
         cycles_account_manager,
         &NetworkTopology::default(),
         SchedulerConfig::application_subnet().dirty_page_overhead,
+        execution_parameters().compute_allocation,
     );
     SystemApiImpl::new(
         api_type,
         sandbox_safe_system_state,
         CANISTER_CURRENT_MEMORY_USAGE,
         execution_parameters(),
-        SubnetAvailableMemory::new(i64::MAX / 2, i64::MAX / 2, i64::MAX / 2),
+        SubnetAvailableMemory::new(
+            SUBNET_MEMORY_CAPACITY,
+            SUBNET_MEMORY_CAPACITY,
+            SUBNET_MEMORY_CAPACITY,
+        ),
         EmbeddersConfig::default()
             .feature_flags
             .wasm_native_stable_memory,

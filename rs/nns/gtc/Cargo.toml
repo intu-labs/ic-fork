@@ -14,14 +14,14 @@ path = "canister/canister.rs"
 # This MUST be kept in sync with build-info-build in the [build-dependencies] section!
 build-info = { version = "0.0.26", default-features = false, features = [] }
 
-candid = "0.8.1"
+candid = { workspace = true }
 dfn_candid = { path = "../../rust_canisters/dfn_candid" }
 dfn_core = { path = "../../rust_canisters/dfn_core" }
 hex = "0.4.2"
 hex-literal = "0.3.1"
 ic-base-types = { path = "../../types/base_types" }
 ic-crypto-getrandom-for-wasm = { path = "../../crypto/getrandom_for_wasm" }
-ic-crypto-sha = {path = "../../crypto/sha/"}
+ic-crypto-sha2 = {path = "../../crypto/sha2/" }
 ic-nervous-system-common-build-metadata = { path = "../../nervous_system/common/build_metadata" }
 ic-nns-governance = { path = "../governance" }
 ic-nns-common = { path = "../common" }

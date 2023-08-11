@@ -3,9 +3,13 @@
 //! The peer manager component periodically checks the registry
 //! and determines the subnet membership according to the latest
 //! registry version and the version currently used by consensus.
-//! The subnet memebership is made available as shared state in a tokio watcher.
-//! Components that want to use the shared state should clone the returned receiver.
-//! It is expected that there exists a 1-n relationship for the peer manager.
+//!
+//! The subnet memebership is made available as shared state via a tokio watcher.
+//!
+//! The compoment runs in a background task and should be started only once.
+//! If mutiple components require the shared state (i.e. the subnet membership)
+//! the returned receiver should be cloned.
+//!
 use std::{
     collections::{BTreeSet, HashMap},
     net::{IpAddr, SocketAddr},
@@ -30,6 +34,8 @@ const TOPOLOGY_UPDATE_INTERVAL: Duration = Duration::from_secs(3);
 
 mod metrics;
 
+/// Starts a background task that publishes the most
+/// recent `SubnetTopology` for the given `subnet_id` into a watch channel.
 pub fn start_peer_manager(
     log: ReplicaLogger,
     metrics_registry: &MetricsRegistry,
@@ -75,8 +81,8 @@ impl PeerManager {
             self.metrics.topology_updates.inc();
 
             let mut topology = self.get_latest_subnet_topology();
-            let _timer = self.metrics.topology_wachter_update_duration.start_timer();
-            // Update shared state with new topology. Only notify wachters if state actually changed.
+            let _timer = self.metrics.topology_watcher_update_duration.start_timer();
+            // Notify watchers of latest shared state iff the latest topology is different to the old one.
             self.topology_sender
                 .send_if_modified(move |old_topology: &mut SubnetTopology| {
                     if old_topology == &topology {
@@ -89,7 +95,7 @@ impl PeerManager {
         }
     }
 
-    /// Get all nodes that are relevant for this subnet according to subnet memebership.
+    /// Get all nodes that are relevant for this subnet according to subnet membership.
     fn get_latest_subnet_topology(&self) -> SubnetTopology {
         let _timer = self.metrics.topology_update_duration.start_timer();
 
@@ -132,7 +138,7 @@ impl PeerManager {
                 }
             };
 
-            for (peer, info) in transport_info {
+            for (peer_id, info) in transport_info {
                 let maybe_endpoint = info
                     .p2p_flow_endpoints
                     .get(0)
@@ -143,14 +149,16 @@ impl PeerManager {
                         if let Ok(ip_addr) = flow_endpoint.ip_addr.parse::<IpAddr>() {
                             // Insert even if already present because we prefer to have the value
                             // with the highest registry version.
-                            subnet_nodes
-                                .insert(peer, SocketAddr::new(ip_addr, flow_endpoint.port as u16));
+                            subnet_nodes.insert(
+                                peer_id,
+                                SocketAddr::new(ip_addr, flow_endpoint.port as u16),
+                            );
                         } else {
                             warn!(
                                 self.log,
                                 "Failed to get parse Ip addr {} for peer {} at registry version {}",
                                 flow_endpoint.ip_addr,
-                                peer,
+                                peer_id,
                                 version
                             );
                         }
@@ -159,7 +167,7 @@ impl PeerManager {
                         warn!(
                             self.log,
                             "Failed to get flow endpoint for peer {} at registry version {}",
-                            peer,
+                            peer_id,
                             version
                         );
                     }
@@ -174,8 +182,7 @@ impl PeerManager {
     }
 }
 
-/// Hold P2P endpoint addresses of all peers in the subnet of this node.
-/// Note: The subnet nodes stored includes this node.
+/// Holds socket addresses of all peers in a subnet.
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
 pub struct SubnetTopology {
     subnet_nodes: HashMap<NodeId, SocketAddr>,
@@ -184,6 +191,13 @@ pub struct SubnetTopology {
 }
 
 impl SubnetTopology {
+    pub fn new<T: IntoIterator<Item = (NodeId, SocketAddr)>>(subnet_nodes: T) -> Self {
+        Self {
+            subnet_nodes: HashMap::from_iter(subnet_nodes),
+            ..Default::default()
+        }
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = (&NodeId, &SocketAddr)> {
         self.subnet_nodes.iter()
     }

@@ -11,13 +11,14 @@ use ic_crypto_node_key_validation::ValidNodePublicKeys;
 use ic_crypto_utils_basic_sig::conversions as crypto_basicsig_conversions;
 use ic_protobuf::registry::{
     crypto::v1::{PublicKey, X509PublicKeyCert},
-    node::v1::{ConnectionEndpoint, FlowEndpoint, NodeRecord, Protocol},
+    node::v1::{ConnectionEndpoint, FlowEndpoint, NodeRecord},
 };
 
 use crate::mutations::node_management::common::{
     get_node_operator_record, make_add_node_registry_mutations, make_update_node_operator_mutation,
 };
 use ic_types::crypto::CurrentNodePublicKeys;
+use ic_types::time::Time;
 use prost::Message;
 
 impl Registry {
@@ -47,15 +48,15 @@ impl Registry {
 
         println!("{}do_add_node: The node id is {:?}", LOG_PREFIX, node_id);
 
+        let mut p2p_endpoint = connection_endpoint_from_string(&payload.http_endpoint);
+        p2p_endpoint.port = 4100;
         // 4. create the Node Record
         let node_record = NodeRecord {
             xnet: Some(connection_endpoint_from_string(&payload.xnet_endpoint)),
             http: Some(connection_endpoint_from_string(&payload.http_endpoint)),
-            p2p_flow_endpoints: payload
-                .p2p_flow_endpoints
-                .iter()
-                .map(|x| flow_endpoint_from_string(x))
-                .collect(),
+            p2p_flow_endpoints: vec![FlowEndpoint {
+                endpoint: Some(p2p_endpoint),
+            }],
             node_operator_id: caller.into_vec(),
             chip_id: vec![],
             hostos_version_id: None,
@@ -96,6 +97,8 @@ pub struct AddNodePayload {
 
     pub xnet_endpoint: String,
     pub http_endpoint: String,
+
+    // TODO(NNS1-2444): The fields below are deprecated and they are not read anywhere.
     pub p2p_flow_endpoints: Vec<String>,
     pub prometheus_metrics_endpoint: String,
 }
@@ -103,7 +106,6 @@ pub struct AddNodePayload {
 /// Parses the ConnectionEndpoint string
 ///
 /// The string is written in form: `ipv4:port` or `[ipv6]:port`.
-// TODO(P2P-520): Support parsing the protocol
 pub fn connection_endpoint_from_string(endpoint: &str) -> ConnectionEndpoint {
     match endpoint.parse::<SocketAddr>() {
         Err(e) => panic!(
@@ -113,7 +115,6 @@ pub fn connection_endpoint_from_string(endpoint: &str) -> ConnectionEndpoint {
         Ok(sa) => ConnectionEndpoint {
             ip_addr: sa.ip().to_string(),
             port: sa.port() as u32, // because protobufs don't have u16
-            protocol: Protocol::Http1 as i32,
         },
     }
 }
@@ -134,7 +135,6 @@ pub fn flow_endpoint_from_string(endpoint: &str) -> FlowEndpoint {
             endpoint: Some(ConnectionEndpoint {
                 ip_addr: sa.ip().to_string(),
                 port: sa.port() as u32, // because protobufs don't have u16
-                protocol: Protocol::Http1 as i32,
             }),
         },
     }
@@ -215,10 +215,21 @@ fn valid_keys_from_payload(
     };
 
     // 5. validate the keys and the node_id
-    match ValidNodePublicKeys::try_from(node_pks, node_id) {
+    match ValidNodePublicKeys::try_from(node_pks, node_id, now()?) {
         Ok(valid_pks) => Ok((node_id, valid_pks)),
         Err(e) => Err(format!("Could not validate public keys, due to {:?}", e)),
     }
+}
+
+fn now() -> Result<Time, String> {
+    let duration = dfn_core::api::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| format!("Could not get current time since UNIX_EPOCH: {e}"))?;
+
+    let nanos = u64::try_from(duration.as_nanos())
+        .map_err(|e| format!("Current time cannot be converted to u64: {:?}", e))?;
+
+    Ok(Time::from_nanos_since_unix_epoch(nanos))
 }
 
 #[cfg(test)]
@@ -256,8 +267,8 @@ mod tests {
             idkg_dealing_encryption_pk: Some(vec![]),
             xnet_endpoint: "127.0.0.1:1234".to_string(),
             http_endpoint: "127.0.0.1:8123".to_string(),
-            p2p_flow_endpoints: vec!["123,127.0.0.1:10000".to_string()],
-            prometheus_metrics_endpoint: "127.0.0.1:5555".to_string(),
+            p2p_flow_endpoints: vec![],
+            prometheus_metrics_endpoint: "".to_string(),
         };
     }
 
@@ -350,7 +361,6 @@ mod tests {
             ConnectionEndpoint {
                 ip_addr: "192.168.1.3".to_string(),
                 port: 8080u32,
-                protocol: Protocol::Http1 as i32,
             }
         );
     }
@@ -368,7 +378,6 @@ mod tests {
             ConnectionEndpoint {
                 ip_addr: "fe80::1".to_string(),
                 port: 80u32,
-                protocol: Protocol::Http1 as i32,
             }
         );
     }
@@ -399,7 +408,6 @@ mod tests {
                 endpoint: Some(ConnectionEndpoint {
                     ip_addr: "127.0.0.1".to_string(),
                     port: 8080u32,
-                    protocol: Protocol::Http1 as i32,
                 })
             }
         );

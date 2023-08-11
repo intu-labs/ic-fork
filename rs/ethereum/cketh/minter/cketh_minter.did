@@ -1,0 +1,37 @@
+type DisplayLogsRequest = record { to : text; from : text; address : text };
+type InitArg = record { ecdsa_key_name : text };
+type JsonRpcRawTxResult = record { id : nat32; result : text; jsonrpc : text };
+type JsonRpcResult = variant {
+  Error : record { code : int64; message : text };
+  Result : JsonRpcRawTxResult;
+};
+type MinterArg = variant { UpgradeArg; InitArg : InitArg };
+type ReceivedEthEvent = record {
+  "principal" : principal;
+  value : nat;
+  from_address : text;
+};
+service : (MinterArg) -> {
+    display_logs : (DisplayLogsRequest) -> (vec ReceivedEthEvent);
+    minter_address : () -> (text);
+    test_transfer : (nat64, nat64, text) -> (JsonRpcResult);
+    test_get_transaction_by_hash : (text) -> (variant { NotFound; Pending; Finalized });
+    eip_1559_transaction_price: () -> (record {
+        base_fee_from_last_finalized_block : nat;
+        base_fee_of_next_finalized_block : nat;
+        max_priority_fee_per_gas : nat;
+        max_fee_per_gas : nat;
+        gas_limit : nat;
+    });
+    eip_2930_transaction_price: () -> (record {
+        gas_price : nat;
+        gas_limit : nat;
+    });
+    withdraw : (nat64, text) -> (record {block_index : nat});
+    dump_state_for_debugging: () -> ( record {
+        ecdsa_key_name : text;
+        last_seen_block_number: nat;
+        minted_transactions : vec record {transaction_hash : text};
+        invalid_transactions : vec record {transaction_hash : text};
+    }) query;
+}

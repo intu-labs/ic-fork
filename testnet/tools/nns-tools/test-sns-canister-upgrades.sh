@@ -59,9 +59,9 @@ upgrade_swap() {
     NEURON_ID=$2
     PEM=$3
     CANISTER_ID=$4
-    VERSION=$5
+    VERSION_OR_WASM=$5
 
-    WASM_FILE=$(download_sns_canister_wasm_gz_for_type swap "$VERSION")
+    WASM_FILE=$([ -f "$VERSION_OR_WASM" ] && echo "$VERSION_OR_WASM" || download_sns_canister_wasm_gz_for_type swap "$VERSION")
 
     propose_upgrade_canister_wasm_file_pem "$NNS_URL" "$NEURON_ID" "$PEM" "$CANISTER_ID" "$WASM_FILE"
 }
@@ -72,26 +72,27 @@ upgrade_sns() {
     NEURON_ID=$3
     PEM=$4
     CANISTER_NAME=$5
-    VERSION=$6
+    VERSION_OR_WASM=$6
     LOG_FILE=$7
     SWAP_CANISTER_ID=$8
     GOV_CANISTER_ID=$9
 
-    # SNS upgrade proposal
+    # For swap testing, we want to do the NNS upgrade
     if [[ $CANISTER_NAME = "swap" ]]; then
         echo "Submitting upgrade proposal to NNS Governance for Swap" | tee -a "$LOG_FILE"
-        upgrade_swap "$NNS_URL" "$NEURON_ID" "$PEM" "$SWAP_CANISTER_ID" "$VERSION"
-    else
-        echo "Submitting upgrade proposal to $GOV_CANISTER_ID" | tee -a "$LOG_FILE"
-        sns_upgrade_to_next_version "$SUBNET_URL" "$PEM" "$GOV_CANISTER_ID" 0
+        upgrade_swap "$NNS_URL" "$NEURON_ID" "$PEM" "$SWAP_CANISTER_ID" "$VERSION_OR_WASM"
     fi
+
+    # SNS upgrade proposal - needed even if swap was upgraded
+    echo "Submitting upgrade proposal to $GOV_CANISTER_ID" | tee -a "$LOG_FILE"
+    sns_upgrade_to_next_version "$SUBNET_URL" "$PEM" "$GOV_CANISTER_ID" 0
 }
 
 echo "$PERMUTATIONS" \
     | while read -r ORDERING; do
 
         echo "Reset versions to mainnet"
-        reset_sns_w_versions_to_mainnet
+        reset_sns_w_versions_to_mainnet "$NNS_URL" "$NEURON_ID"
         # add principal to whitelist
         add_sns_wasms_allowed_principal "$NNS_URL" "$NEURON_ID" "$PEM" "$WALLET_CANISTER"
         # deploy new SNS
@@ -134,10 +135,15 @@ echo "$PERMUTATIONS" \
                 break
             fi
 
+        done
+
+        for CANISTER in $ORDERING; do
+
+            echo "Uploading ungzipped $CANISTER WASM to SNS-W" | tee -a $LOG_FILE
             WASM_GZ_FILE=$(download_sns_canister_wasm_gz_for_type "$CANISTER" "$VERSION")
 
-            ORIGINAL_HASH=$(sha_256 $WASM_GZ_FILE)
-            UNZIPPED=$(ungzip $WASM_GZ_FILE)
+            ORIGINAL_HASH=$(sha_256 "$WASM_GZ_FILE")
+            UNZIPPED=$(ungzip "$WASM_GZ_FILE")
             NEW_HASH=$(sha_256 "$UNZIPPED")
             if [ "$NEW_HASH" == "$ORIGINAL_HASH" ]; then
                 print_red "Hashes were the same, aborting rest of test..."
@@ -147,7 +153,7 @@ echo "$PERMUTATIONS" \
                 "$PEM" "$CANISTER" "$UNZIPPED"
 
             upgrade_sns "$NNS_URL" "$SUBNET_URL" "$NEURON_ID" "$PEM" \
-                "$CANISTER" "$VERSION" "$LOG_FILE" "$SWAP_CANISTER_ID" "$GOV_CANISTER_ID"
+                "$CANISTER" "$UNZIPPED" "$LOG_FILE" "$SWAP_CANISTER_ID" "$GOV_CANISTER_ID"
 
             if ! wait_for_canister_has_file_contents "$SUBNET_URL" \
                 $(sns_canister_id_for_sns_canister_type $CANISTER) "$UNZIPPED"; then
@@ -155,9 +161,8 @@ echo "$PERMUTATIONS" \
                 print_red "Failed upgrade for '$ORDERING' on step upgrading '$CANISTER'" | tee -a $LOG_FILE
                 break
             fi
-            #TODO - make sure the upgrade works to Version+1
-
         done
+
         print_green "Finished testing 'Upgrade Order: $ORDERING' but check for failures" | tee -a $LOG_FILE
         # Log finished with ordering
 

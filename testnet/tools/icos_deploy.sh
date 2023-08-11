@@ -32,8 +32,9 @@ function exit_usage() {
         err '    --dkg-interval-length <dil>           Set DKG interval length (-1 if not provided explicitly, which means - default will be used)'
         err '    --max-ingress-bytes-per-message <dil> Set maximum ingress size in bytes (-1 if not provided explicitly, which means - default will be used)'
         err '    --hosts-ini <hosts_override.ini>      Override the default ansible hosts.ini to set different testnet configuration'
+        err '    --no-api-nodes                        Do not deploy API boundary nodes even if they are declared in the hosts.ini file'
         err '    --no-boundary-nodes                   Do not deploy boundary nodes even if they are declared in the hosts.ini file'
-        err '    --boundary-dev-image		       Use development image of the boundary node VM (includes development service worker'
+        err '    --boundary-dev-image		           Use development image of the boundary node VM (includes development service worker'
         err '    --with-testnet-keys                   Initialize the registry with readonly and backup keys from testnet/config/ssh_authorized_keys'
         err '    --allow-specified-ids                 Allow installing canisters at specified IDs'
         err ''
@@ -267,6 +268,7 @@ mkdir -p "${MEDIA_PATH}"
     ${ALLOW_SPECIFIED_IDS:-}
 
 SCP_PREFIX=""
+NNS_PUBLIC_KEY=$(sed '1d;$d' "${MEDIA_PATH}/nns-public-key.pem" | tr -d '\n\r')
 if [ -n "${ANSIBLE_REMOTE_USER:-}" ]; then
     SCP_PREFIX="${ANSIBLE_REMOTE_USER}@"
 fi
@@ -403,6 +405,9 @@ rm -rf "${TMPDIR}"
 echo "-------------------------------------------------------------------------------"
 cd "${REPO_ROOT}/testnet/ansible"
 
+echo "**** Remove eventual monitoring - ($(dateFromEpoch "$(date '+%s')"))"
+ansible ic_p8s_service_discovery_destroy.yml
+
 echo "**** Create new IC instance - ($(dateFromEpoch "$(date '+%s')"))"
 ansible icos_network_redeploy.yml -e ic_state="create"
 
@@ -413,8 +418,7 @@ echo "**** Install NNS canisters - ($(dateFromEpoch "$(date '+%s')"))"
 ansible icos_network_redeploy.yml -e ic_state="install"
 
 echo "**** Start monitoring - ($(dateFromEpoch "$(date '+%s')"))"
-ansible ic_p8s_network_update.yml -e yes_i_confirm=yes
-ansible ic_p8s_service_discovery_install.yml -e yes_i_confirm=yes -e nns_public_key_path="${MEDIA_PATH}/nns-public-key.pem"
+ansible ic_p8s_service_discovery_install.yml -e yes_i_confirm=yes -e nns_public_key="${NNS_PUBLIC_KEY}"
 
 endtime="$(date '+%s')"
 echo "**** Completed deployment at $(dateFromEpoch "${endtime}") (start time was $(dateFromEpoch "${starttime}"))"

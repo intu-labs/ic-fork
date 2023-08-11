@@ -9,7 +9,7 @@ import (
 )
 
 func NewRootCmd() *cobra.Command {
-	var version = "0.1.0"
+	var version = "0.1.2"
 	var rootCmd = &cobra.Command{
 		Version: version,
 		Use:     "ict",

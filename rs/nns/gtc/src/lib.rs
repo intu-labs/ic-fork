@@ -85,7 +85,7 @@ impl Gtc {
         let public_key = decode_hex_public_key(&public_key_hex)?;
         validate_public_key_against_caller(&public_key, caller)?;
 
-        let custodian_neuron_id = self.donate_account_recipient_neuron_id.clone();
+        let custodian_neuron_id = self.donate_account_recipient_neuron_id;
 
         let address = public_key_to_gtc_address(&public_key);
         let account = self.get_account_mut(&address)?;
@@ -112,9 +112,7 @@ impl Gtc {
             forward_whitelist.insert(gtc_address.to_string());
         }
 
-        let custodian_neuron_id = self
-            .forward_whitelisted_unclaimed_accounts_recipient_neuron_id
-            .clone();
+        let custodian_neuron_id = self.forward_whitelisted_unclaimed_accounts_recipient_neuron_id;
 
         for (gtc_address, account) in self.accounts.iter_mut() {
             if !account.has_claimed
@@ -122,7 +120,7 @@ impl Gtc {
                 && !account.has_forwarded
                 && forward_whitelist.contains(gtc_address)
             {
-                match account.transfer(custodian_neuron_id.clone()).await {
+                match account.transfer(custodian_neuron_id).await {
                     Ok(_) => account.has_forwarded = true,
                     Err(error) => {
                         println!(
@@ -193,11 +191,8 @@ impl AccountState {
         let neuron_ids = self.neuron_ids.clone();
 
         for neuron_id in neuron_ids {
-            let result = GovernanceCanister::transfer_gtc_neuron(
-                neuron_id.clone(),
-                custodian_neuron_id.clone(),
-            )
-            .await;
+            let result =
+                GovernanceCanister::transfer_gtc_neuron(neuron_id, custodian_neuron_id).await;
 
             self.neuron_ids.retain(|id| id != &neuron_id);
 
@@ -333,7 +328,7 @@ pub fn der_encode(public_key: &PublicKey) -> Vec<u8> {
 pub mod test_constants {
     use super::{decode_hex_public_key, public_key_to_gtc_address, public_key_to_principal};
     use ic_base_types::PrincipalId;
-    use ic_crypto_sha::Sha256;
+    use ic_crypto_sha2::Sha256;
     use libsecp256k1::{sign, Message, PublicKey, PublicKeyFormat, SecretKey};
     use std::str::FromStr;
 

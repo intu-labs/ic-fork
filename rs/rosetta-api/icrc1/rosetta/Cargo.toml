@@ -18,17 +18,18 @@ ic-ledger-canister-core = { path = "../../ledger_canister_core" }
 ic-base-types = { path = "../../../types/base_types" }
 anyhow = { version = "1.0", default-features = false }
 tempfile = "3.1.0"
-candid = "0.8"
+candid = { workspace = true }
 serde_bytes = "0.11"
 serde = "1"
 serde_json = "1.0.82"
 serde_cbor = "0.11.2"
 serde_with = "1.6.2"
 num-traits = "0.2.12"
-ciborium = "0.2"
+ciborium = { workspace = true }
 icrc-ledger-types = { path = "../../../../packages/icrc-ledger-types" }
 ic-icrc1-ledger = { path = "../ledger" }
 ic-icrc1 = { path = ".." }
+ic-icrc1-tokens-u64 = { path = "../tokens_u64" }
 proptest = "1.0"
 rand = "0.8.4"
 axum = "0.6.1"

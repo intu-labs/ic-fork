@@ -172,6 +172,10 @@ pub struct SubnetAvailableMemory {
     message_memory: i64,
     /// The memory available for Wasm custom sections.
     wasm_custom_sections_memory: i64,
+    /// Specifies the factor by which the subnet available memory was scaled
+    /// using the division operator. It is useful for approximating the global
+    /// available memory from the per-thread available memory.
+    scaling_factor: i64,
 }
 
 impl SubnetAvailableMemory {
@@ -184,6 +188,9 @@ impl SubnetAvailableMemory {
             execution_memory,
             message_memory,
             wasm_custom_sections_memory,
+            // The newly created value is not scaled (divided), which
+            // corresponds to the scaling factor of 1.
+            scaling_factor: 1,
         }
     }
 
@@ -201,6 +208,17 @@ impl SubnetAvailableMemory {
     /// execution available memory.
     pub fn get_wasm_custom_sections_memory(&self) -> i64 {
         self.wasm_custom_sections_memory
+    }
+
+    /// Returns the scaling factor that specifies by how much the initial
+    /// available memory was scaled using the division operator.
+    ///
+    /// It is useful for approximating the global available memory from the
+    /// per-thread available memory. Note that the approximation may be off in
+    /// both directions because there is no way to deterministically know how
+    /// much other threads have allocated.
+    pub fn get_scaling_factor(&self) -> i64 {
+        self.scaling_factor
     }
 
     /// Try to use some memory capacity and fail if not enough is available
@@ -289,6 +307,7 @@ impl ops::Div<i64> for SubnetAvailableMemory {
             execution_memory: self.execution_memory / rhs,
             message_memory: self.message_memory / rhs,
             wasm_custom_sections_memory: self.wasm_custom_sections_memory / rhs,
+            scaling_factor: self.scaling_factor * rhs,
         }
     }
 }
@@ -607,7 +626,7 @@ pub trait SystemApi {
     /// Can be called at most once between `ic0.call_new` and
     /// `ic0.call_perform`.
     ///
-    /// See https://sdk.dfinity.org/docs/interface-spec/index.html#system-api-call
+    /// See <https://sdk.dfinity.org/docs/interface-spec/index.html#system-api-call>
     fn ic0_call_on_cleanup(&mut self, fun: u32, env: u32) -> HypervisorResult<()>;
 
     /// (deprecated) Please use `ic0_call_cycles_add128` instead, as this API
@@ -902,7 +921,7 @@ pub trait SystemApi {
     ) -> HypervisorResult<()>;
 
     /// Sets the certified data for the canister.
-    /// See: https://sdk.dfinity.org/docs/interface-spec/index.html#system-api-certified-data
+    /// See: <https://sdk.dfinity.org/docs/interface-spec/index.html#system-api-certified-data>
     fn ic0_certified_data_set(&mut self, src: u32, size: u32, heap: &[u8]) -> HypervisorResult<()>;
 
     /// If run in non-replicated execution (i.e. query),

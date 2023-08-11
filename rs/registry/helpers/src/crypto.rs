@@ -160,7 +160,7 @@ pub fn initial_ni_dkg_transcript_from_registry_record(
         .iter()
         .map(|n| {
             PrincipalId::try_from(&n[..])
-                .map(|principal_id| NodeId::from(principal_id))
+                .map(NodeId::from)
                 .map_err(|err| DecodeError {
                     error: format!("invalid principal ID: {}", err),
                 })
@@ -187,4 +187,69 @@ pub fn initial_ni_dkg_transcript_from_registry_record(
             ),
         })?,
     })
+}
+
+pub mod root_of_trust {
+    use crate::{crypto::CryptoRegistry, subnet::SubnetRegistry};
+    use ic_base_types::RegistryVersion;
+    use ic_interfaces_registry::RegistryClient;
+    use ic_types::{
+        crypto::threshold_sig::{IcRootOfTrust, RootOfTrustProvider},
+        registry::RegistryClientError,
+    };
+    use std::sync::Arc;
+    use thiserror::Error;
+
+    /// Implementation of [`RootOfTrustProvider`] that uses the registry to
+    /// obtain the root of trust.
+    #[derive(Clone)]
+    pub struct RegistryRootOfTrustProvider {
+        registry_client: Arc<dyn RegistryClient>,
+        registry_version: RegistryVersion,
+    }
+
+    impl RegistryRootOfTrustProvider {
+        pub fn new(
+            registry_client: Arc<dyn RegistryClient>,
+            registry_version: RegistryVersion,
+        ) -> Self {
+            Self {
+                registry_client,
+                registry_version,
+            }
+        }
+    }
+
+    #[derive(Error, Clone, Debug, PartialEq, Eq)]
+    pub enum RegistryRootOfTrustProviderError {
+        #[error("registry client error: {0}")]
+        RegistryError(RegistryClientError),
+        #[error("root subnet not found for registry version {registry_version}")]
+        RootSubnetNotFound { registry_version: RegistryVersion },
+        #[error("root subnet public key not found for registry version {registry_version}")]
+        RootSubnetPublicKeyNotFound { registry_version: RegistryVersion },
+    }
+
+    impl RootOfTrustProvider for RegistryRootOfTrustProvider {
+        type Error = RegistryRootOfTrustProviderError;
+
+        fn root_of_trust(&self) -> Result<IcRootOfTrust, Self::Error> {
+            let root_subnet_id = self
+                .registry_client
+                .get_root_subnet_id(self.registry_version)
+                .map_err(RegistryRootOfTrustProviderError::RegistryError)?
+                .ok_or(RegistryRootOfTrustProviderError::RootSubnetNotFound {
+                    registry_version: self.registry_version,
+                })?;
+            self.registry_client
+                .get_threshold_signing_public_key_for_subnet(root_subnet_id, self.registry_version)
+                .map_err(RegistryRootOfTrustProviderError::RegistryError)?
+                .ok_or(
+                    RegistryRootOfTrustProviderError::RootSubnetPublicKeyNotFound {
+                        registry_version: self.registry_version,
+                    },
+                )
+                .map(IcRootOfTrust::from)
+        }
+    }
 }

@@ -1704,6 +1704,8 @@ pub struct DerivedProposalInformation {
 /// the swap canister.
 ///
 /// (See Governance::fetch_swap_background_information for how this is compiled.)
+///
+/// Obsolete. Superseded by newer fields.
 #[derive(
     candid::CandidType,
     candid::Deserialize,
@@ -2256,6 +2258,11 @@ pub mod create_service_nervous_system {
         pub start_time: ::core::option::Option<::ic_nervous_system_proto::pb::v1::GlobalTimeOfDay>,
         #[prost(message, optional, tag = "10")]
         pub duration: ::core::option::Option<::ic_nervous_system_proto::pb::v1::Duration>,
+        /// The amount that the Neuron's Fund will collectively spend in maturity on
+        /// the swap.
+        #[prost(message, optional, tag = "11")]
+        pub neurons_fund_investment_icp:
+            ::core::option::Option<::ic_nervous_system_proto::pb::v1::Tokens>,
     }
     /// Nested message and enum types in `SwapParameters`.
     pub mod swap_parameters {
@@ -2460,6 +2467,8 @@ pub struct Governance {
     /// that it should finish before being called again.
     #[prost(bool, optional, tag = "19")]
     pub spawning_neurons: ::core::option::Option<bool>,
+    #[prost(message, optional, tag = "20")]
+    pub making_sns_proposal: ::core::option::Option<governance::MakingSnsProposal>,
 }
 /// Nested message and enum types in `Governance`.
 pub mod governance {
@@ -2534,7 +2543,8 @@ pub mod governance {
         }
     }
     /// Stores metrics that are too costly to compute each time metrics are
-    /// requested
+    /// requested. For bucketed metrics, keys are bucket IDs, i.e., number of full
+    /// half-year dissolve delay intervals of neurons counted towards this bucket.
     #[derive(candid::CandidType, candid::Deserialize, serde::Serialize, comparable::Comparable)]
     #[compare_default]
     #[derive(Clone, PartialEq, ::prost::Message)]
@@ -2575,6 +2585,45 @@ pub mod governance {
         pub community_fund_total_maturity_e8s_equivalent: u64,
         #[prost(uint64, tag = "18")]
         pub total_locked_e8s: u64,
+        #[prost(uint64, tag = "19")]
+        pub total_maturity_e8s_equivalent: u64,
+        #[prost(uint64, tag = "20")]
+        pub total_staked_maturity_e8s_equivalent: u64,
+        #[prost(map = "uint64, double", tag = "21")]
+        pub dissolving_neurons_staked_maturity_e8s_equivalent_buckets:
+            ::std::collections::HashMap<u64, f64>,
+        #[prost(uint64, tag = "22")]
+        pub dissolving_neurons_staked_maturity_e8s_equivalent_sum: u64,
+        #[prost(map = "uint64, double", tag = "23")]
+        pub not_dissolving_neurons_staked_maturity_e8s_equivalent_buckets:
+            ::std::collections::HashMap<u64, f64>,
+        #[prost(uint64, tag = "24")]
+        pub not_dissolving_neurons_staked_maturity_e8s_equivalent_sum: u64,
+    }
+    /// Records that making an OpenSnsTokenSwap (OSTS) or CreateServiceNervousSystem (CSNS)
+    /// proposal is in progress. We only want one of these to be happening at the same time,
+    /// because otherwise, it is error prone to enforce that open OSTS or CSNS proposals are
+    /// unique. In particular, the result of checking that the proposal currently being made
+    /// would be unique is liable to becoming invalid during an .await.
+    ///
+    /// This is a temporary measure, because OSTS is part of the SNS flow that will
+    /// be replaced by 1-proposal very soon.
+    #[derive(
+        candid::CandidType,
+        candid::Deserialize,
+        serde::Serialize,
+        comparable::Comparable,
+        Clone,
+        PartialEq,
+        ::prost::Message,
+    )]
+    pub struct MakingSnsProposal {
+        #[prost(message, optional, tag = "1")]
+        pub proposer_id: ::core::option::Option<::ic_nns_common::pb::v1::NeuronId>,
+        #[prost(message, optional, tag = "2")]
+        pub caller: ::core::option::Option<::ic_base_types::PrincipalId>,
+        #[prost(message, optional, tag = "3")]
+        pub proposal: ::core::option::Option<super::Proposal>,
     }
 }
 /// Proposals with restricted voting are not included unless the caller
@@ -2865,6 +2914,85 @@ pub mod settle_community_fund_participation {
         Committed(Committed),
         #[prost(message, tag = "3")]
         Aborted(Aborted),
+    }
+}
+/// Audit events in order to leave an audit trail for certain operations.
+#[derive(
+    candid::CandidType,
+    candid::Deserialize,
+    serde::Serialize,
+    comparable::Comparable,
+    Clone,
+    PartialEq,
+    ::prost::Message,
+)]
+pub struct AuditEvent {
+    /// The timestamp of the event.
+    #[prost(uint64, tag = "1")]
+    pub timestamp_seconds: u64,
+    #[prost(oneof = "audit_event::Payload", tags = "2")]
+    pub payload: ::core::option::Option<audit_event::Payload>,
+}
+/// Nested message and enum types in `AuditEvent`.
+pub mod audit_event {
+    #[derive(
+        candid::CandidType,
+        candid::Deserialize,
+        serde::Serialize,
+        comparable::Comparable,
+        Clone,
+        PartialEq,
+        ::prost::Message,
+    )]
+    pub struct ResetAging {
+        /// The neuron id whose aging was reset.
+        #[prost(fixed64, tag = "1")]
+        pub neuron_id: u64,
+        /// The aging_since_timestamp_seconds before reset.
+        #[prost(uint64, tag = "2")]
+        pub previous_aging_since_timestamp_seconds: u64,
+        /// The aging_since_timestamp_seconds after reset.
+        #[prost(uint64, tag = "3")]
+        pub new_aging_since_timestamp_seconds: u64,
+        /// Neuron's stake at the time of reset.
+        #[prost(uint64, tag = "6")]
+        pub neuron_stake_e8s: u64,
+        /// Neuron's dissolve state at the time of reset.
+        #[prost(oneof = "reset_aging::NeuronDissolveState", tags = "4, 5")]
+        pub neuron_dissolve_state: ::core::option::Option<reset_aging::NeuronDissolveState>,
+    }
+    /// Nested message and enum types in `ResetAging`.
+    pub mod reset_aging {
+        /// Neuron's dissolve state at the time of reset.
+        #[derive(
+            candid::CandidType,
+            candid::Deserialize,
+            serde::Serialize,
+            comparable::Comparable,
+            Clone,
+            PartialEq,
+            ::prost::Oneof,
+        )]
+        pub enum NeuronDissolveState {
+            #[prost(uint64, tag = "4")]
+            WhenDissolvedTimestampSeconds(u64),
+            #[prost(uint64, tag = "5")]
+            DissolveDelaySeconds(u64),
+        }
+    }
+    #[derive(
+        candid::CandidType,
+        candid::Deserialize,
+        serde::Serialize,
+        comparable::Comparable,
+        Clone,
+        PartialEq,
+        ::prost::Oneof,
+    )]
+    pub enum Payload {
+        /// Reset aging timestamps for <https://forum.dfinity.org/t/icp-neuron-age-is-52-years/21261/26>
+        #[prost(message, tag = "2")]
+        ResetAging(ResetAging),
     }
 }
 /// Proposal types are organized into topics. Neurons can automatically

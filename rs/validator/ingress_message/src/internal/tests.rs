@@ -14,6 +14,7 @@ mod validate_request {
     use ic_types::time::GENESIS;
     use ic_types::CanisterId;
     use ic_types::{Time, UserId};
+    use ic_validator_http_request_test_utils::DelegationChain;
     use ic_validator_http_request_test_utils::DirectAuthenticationScheme::{
         CanisterSignature, UserKeyPair,
     };
@@ -41,9 +42,7 @@ mod validate_request {
     mod ingress_expiry {
         use super::*;
         use crate::RequestValidationError::InvalidIngressExpiry;
-        use ic_validator_http_request_test_utils::{
-            AuthenticationScheme, DelegationChain, HttpRequestBuilder,
-        };
+        use ic_validator_http_request_test_utils::{AuthenticationScheme, HttpRequestBuilder};
         use std::time::Duration;
 
         #[test]
@@ -182,24 +181,178 @@ mod validate_request {
                 assert_matches!(result, Ok(()), "Test with {builder_info} failed");
             }
         }
+    }
 
-        fn all_authentication_schemes<R: Rng + CryptoRng>(
-            rng: &mut R,
-        ) -> Vec<AuthenticationScheme> {
-            use strum::EnumCount;
+    mod read_state_request {
+        use super::*;
+        use crate::RequestValidationError::{PathTooLongError, TooManyPathsError};
+        use ic_crypto_tree_hash::{Label, Path};
+        use rand::prelude::SliceRandom;
+        use std::ops::RangeInclusive;
 
-            let schemes = vec![
-                AuthenticationScheme::Anonymous,
-                AuthenticationScheme::Direct(random_user_key_pair(rng)),
-                AuthenticationScheme::Direct(canister_signature_with_hard_coded_root_of_trust()),
-                AuthenticationScheme::Delegation(
-                    DelegationChain::rooted_at(random_user_key_pair(rng))
-                        .delegate_to(random_user_key_pair(rng), CURRENT_TIME)
-                        .build(),
+        const MAXIMUM_NUMBER_OF_PATHS: usize = 1_000; // !changing this number might be breaking!
+        const MAXIMUM_NUMBER_OF_LABELS_PER_PATH: usize = 127; // !changing this number might be breaking!
+
+        #[test]
+        fn should_validate_read_state_requests_with_allowed_width_and_depth_of_paths() {
+            let mut rng = reproducible_rng();
+            let paths = random_paths(
+                &mut rng,
+                0..=MAXIMUM_NUMBER_OF_PATHS,
+                0..=MAXIMUM_NUMBER_OF_LABELS_PER_PATH,
+            );
+            let verifier = default_verifier()
+                .with_root_of_trust(hard_coded_root_of_trust().public_key)
+                .build();
+
+            for scheme in all_authentication_schemes(&mut rng) {
+                let request = HttpRequestBuilder::new_read_state()
+                    .with_authentication(scheme)
+                    .with_ingress_expiry_at(max_ingress_expiry_at(CURRENT_TIME))
+                    .with_paths(paths.clone())
+                    .build();
+
+                let result = verifier.validate_request(&request);
+
+                assert_eq!(result, Ok(()));
+            }
+        }
+
+        #[test]
+        fn should_validate_read_state_request_with_paths_width_and_depth_at_boundaries() {
+            let mut rng = reproducible_rng();
+            let paths_to_test: Vec<Vec<Path>> = vec![
+                vec![],
+                random_paths(
+                    &mut rng,
+                    MAXIMUM_NUMBER_OF_PATHS..=MAXIMUM_NUMBER_OF_PATHS,
+                    MAXIMUM_NUMBER_OF_LABELS_PER_PATH..=MAXIMUM_NUMBER_OF_LABELS_PER_PATH,
                 ),
             ];
-            assert_eq!(schemes.len(), AuthenticationScheme::COUNT + 1);
-            schemes
+            let verifier = default_verifier()
+                .with_root_of_trust(hard_coded_root_of_trust().public_key)
+                .build();
+
+            for paths in paths_to_test {
+                for scheme in all_authentication_schemes(&mut rng) {
+                    let request = HttpRequestBuilder::new_read_state()
+                        .with_authentication(scheme)
+                        .with_ingress_expiry_at(max_ingress_expiry_at(CURRENT_TIME))
+                        .with_paths(paths.clone())
+                        .build();
+
+                    let result = verifier.validate_request(&request);
+
+                    assert_eq!(result, Ok(()));
+                }
+            }
+        }
+
+        #[test]
+        fn should_fail_when_single_path_too_deep() {
+            let mut rng = reproducible_rng();
+            let (paths_with_one_too_deep, depth) = {
+                let mut paths = random_paths(
+                    &mut rng,
+                    0..=MAXIMUM_NUMBER_OF_PATHS - 1,
+                    0..=MAXIMUM_NUMBER_OF_LABELS_PER_PATH,
+                );
+                let path_too_deep = random_path(
+                    &mut rng,
+                    MAXIMUM_NUMBER_OF_LABELS_PER_PATH + 1..=2 * MAXIMUM_NUMBER_OF_LABELS_PER_PATH,
+                );
+                let depth = path_too_deep.len();
+                paths.push(path_too_deep);
+                paths.shuffle(&mut rng);
+                assert!(paths.len() <= MAXIMUM_NUMBER_OF_PATHS);
+                (paths, depth)
+            };
+            let verifier = default_verifier()
+                .with_root_of_trust(hard_coded_root_of_trust().public_key)
+                .build();
+
+            for scheme in all_authentication_schemes(&mut rng) {
+                let request = HttpRequestBuilder::new_read_state()
+                    .with_authentication(scheme)
+                    .with_ingress_expiry_at(max_ingress_expiry_at(CURRENT_TIME))
+                    .with_paths(paths_with_one_too_deep.clone())
+                    .build();
+
+                let result = verifier.validate_request(&request);
+
+                assert_eq!(
+                    result,
+                    Err(PathTooLongError {
+                        length: depth,
+                        maximum: MAXIMUM_NUMBER_OF_LABELS_PER_PATH
+                    })
+                );
+            }
+        }
+
+        #[test]
+        fn should_fail_when_too_many_paths() {
+            let mut rng = reproducible_rng();
+            let paths = random_paths(
+                &mut rng,
+                MAXIMUM_NUMBER_OF_PATHS + 1..=2 * MAXIMUM_NUMBER_OF_PATHS,
+                0..=MAXIMUM_NUMBER_OF_LABELS_PER_PATH,
+            );
+            let verifier = default_verifier()
+                .with_root_of_trust(hard_coded_root_of_trust().public_key)
+                .build();
+
+            for scheme in all_authentication_schemes(&mut rng) {
+                let request = HttpRequestBuilder::new_read_state()
+                    .with_authentication(scheme)
+                    .with_ingress_expiry_at(max_ingress_expiry_at(CURRENT_TIME))
+                    .with_paths(paths.clone())
+                    .build();
+
+                let result = verifier.validate_request(&request);
+
+                assert_eq!(
+                    result,
+                    Err(TooManyPathsError {
+                        length: paths.len(),
+                        maximum: MAXIMUM_NUMBER_OF_PATHS
+                    })
+                );
+            }
+        }
+
+        fn random_paths<R: Rng + CryptoRng>(
+            rng: &mut R,
+            num_paths_range: RangeInclusive<usize>,
+            num_labels_range: RangeInclusive<usize>,
+        ) -> Vec<Path> {
+            let num_paths = rng.gen_range(num_paths_range);
+            let mut paths = Vec::with_capacity(num_paths);
+            for _ in 0..num_paths {
+                paths.push(random_path(rng, num_labels_range.clone()));
+            }
+            assert_eq!(paths.len(), num_paths);
+            paths
+        }
+
+        fn random_path<R: Rng + CryptoRng>(
+            rng: &mut R,
+            num_labels_range: RangeInclusive<usize>,
+        ) -> Path {
+            let num_labels = rng.gen_range(num_labels_range);
+            let mut labels = Vec::with_capacity(num_labels);
+            for _ in 0..num_labels {
+                labels.push(random_label(rng));
+            }
+            let path = Path::from(labels);
+            assert_eq!(path.len(), num_labels);
+            path
+        }
+
+        fn random_label<R: Rng + CryptoRng>(rng: &mut R) -> Label {
+            let mut bytes = [0u8; 32];
+            rng.fill_bytes(&mut bytes);
+            Label::from(bytes)
         }
     }
 
@@ -769,8 +922,8 @@ mod validate_request {
         use rand::{CryptoRng, Rng};
         use std::time::Duration;
 
-        const MAXIMUM_NUMBER_OF_DELEGATIONS: usize = 20; // !changing this number might be breaking!//
-        const MAXIMUM_NUMBER_OF_TARGETS: usize = 1_000; // !changing this number might be breaking!//
+        const MAXIMUM_NUMBER_OF_DELEGATIONS: usize = 20; // !changing this number might be breaking!
+        const MAXIMUM_NUMBER_OF_TARGETS: usize = 1_000; // !changing this number might be breaking!
         const CURRENT_TIME: Time = GENESIS;
 
         #[test]
@@ -1625,6 +1778,23 @@ mod validate_request {
         }
     }
 
+    fn all_authentication_schemes<R: Rng + CryptoRng>(rng: &mut R) -> Vec<AuthenticationScheme> {
+        use strum::EnumCount;
+
+        let schemes = vec![
+            AuthenticationScheme::Anonymous,
+            AuthenticationScheme::Direct(random_user_key_pair(rng)),
+            AuthenticationScheme::Direct(canister_signature_with_hard_coded_root_of_trust()),
+            AuthenticationScheme::Delegation(
+                DelegationChain::rooted_at(random_user_key_pair(rng))
+                    .delegate_to(random_user_key_pair(rng), CURRENT_TIME)
+                    .build(),
+            ),
+        ];
+        assert_eq!(schemes.len(), AuthenticationScheme::COUNT + 1);
+        schemes
+    }
+
     fn auth_with_random_user_key_pair<R: Rng + CryptoRng>(rng: &mut R) -> AuthenticationScheme {
         AuthenticationScheme::Direct(random_user_key_pair(rng))
     }
@@ -1674,58 +1844,9 @@ mod validate_request {
     }
 }
 
-mod registry {
-    use super::*;
-    use crate::internal::{
-        nns_root_public_key, registry_with_root_of_trust, DUMMY_REGISTRY_VERSION,
-    };
-    use ic_crypto_utils_threshold_sig_der::parse_threshold_sig_key_from_der;
-    use ic_registry_client_fake::FakeRegistryClient;
-    use ic_registry_client_helpers::crypto::CryptoRegistry;
-    use ic_registry_client_helpers::subnet::SubnetRegistry;
-    use ic_types::crypto::threshold_sig::ThresholdSigPublicKey;
-    use ic_types::RegistryVersion;
-
-    #[test]
-    fn should_get_registry_with_nns_root_public_key() {
-        let (registry_client, _registry_data) = registry_with_root_of_trust(nns_root_public_key());
-
-        let retrieved_nns_root_public_key =
-            crypto_logic_to_retrieve_root_subnet_pubkey(&registry_client, DUMMY_REGISTRY_VERSION);
-
-        assert_matches!(retrieved_nns_root_public_key, Some(actual_key)
-                if actual_key == nns_root_public_key());
-    }
-
-    #[test]
-    fn should_get_registry_with_other_subnet_public_key() {
-        let other_root_of_trust = parse_threshold_sig_key_from_der(&hex::decode("308182301D060D2B0601040182DC7C0503010201060C2B0601040182DC7C05030201036100923A67B791270CD8F5320212AE224377CF407D3A8A2F44F11FED5915A97EE67AD0E90BC382A44A3F14C363AD2006640417B4BBB3A304B97088EC6B4FC87A25558494FC239B47E129260232F79973945253F5036FD520DDABD1E2DE57ABFB40CB").unwrap()).unwrap();
-        let (registry_client, _registry_data) = registry_with_root_of_trust(other_root_of_trust);
-
-        let retrieved_root_of_trust =
-            crypto_logic_to_retrieve_root_subnet_pubkey(&registry_client, DUMMY_REGISTRY_VERSION);
-
-        assert_matches!(retrieved_root_of_trust, Some(actual_key)
-                if actual_key == other_root_of_trust);
-    }
-
-    fn crypto_logic_to_retrieve_root_subnet_pubkey(
-        registry: &FakeRegistryClient,
-        registry_version: RegistryVersion,
-    ) -> Option<ThresholdSigPublicKey> {
-        let root_subnet_id = registry
-            .get_root_subnet_id(registry_version)
-            .expect("error retrieving root subnet ID")
-            .expect("missing root subnet ID");
-        registry
-            .get_threshold_signing_public_key_for_subnet(root_subnet_id, registry_version)
-            .expect("error retrieving root public key")
-    }
-}
-
 mod root_of_trust {
     use crate::internal::{nns_root_public_key, ConstantRootOfTrustProvider};
-    use ic_types::crypto::threshold_sig::{IcRootOfTrust, RootOfTrustProvider};
+    use ic_types::crypto::threshold_sig::RootOfTrustProvider;
 
     #[test]
     fn should_retrieve_root_of_trust() {
@@ -1734,6 +1855,42 @@ mod root_of_trust {
 
         let result = provider.root_of_trust();
 
-        assert_eq!(result, Ok(IcRootOfTrust::from(root_of_trust)));
+        assert_eq!(result, Ok(root_of_trust));
+    }
+}
+
+mod standalone_ingress_sig_verifier {
+    use crate::internal::StandaloneIngressSigVerifier;
+    use assert_matches::assert_matches;
+    use ic_crypto_test_utils_canister_sigs::new_valid_sig_and_crypto_component;
+    use ic_crypto_test_utils_reproducible_rng::reproducible_rng;
+    use ic_interfaces::crypto::CanisterSigVerifier;
+    use ic_types::crypto::{AlgorithmId, CryptoError};
+
+    #[test]
+    fn should_error_when_user_public_key_algorithm_id_wrong() {
+        use strum::IntoEnumIterator;
+
+        let verifier = StandaloneIngressSigVerifier;
+        let mut rng = reproducible_rng();
+        let mut data = new_valid_sig_and_crypto_component(&mut rng, false);
+
+        AlgorithmId::iter()
+            .filter(|algorithm_id| *algorithm_id != AlgorithmId::IcCanisterSignature)
+            .for_each(|wrong_algorithm_id| {
+                data.canister_pk.algorithm_id = wrong_algorithm_id;
+
+                let result = verifier.verify_canister_sig(
+                    &data.canister_sig,
+                    &data.msg,
+                    &data.canister_pk,
+                    &data.root_of_trust,
+                );
+
+                assert_matches!(
+                result,
+                Err(CryptoError::AlgorithmNotSupported { algorithm, .. }) if algorithm == wrong_algorithm_id
+            );
+            });
     }
 }

@@ -26,6 +26,7 @@ ic-types = { path = "../../types/types" }
 rand = "0.8"
 tempfile = "3.1.0"
 tokio = { version = "1.15.0", features = ["full"] }
+tokio-rustls = "0.24.0"
 
 [dev-dependencies]
 assert_matches = "1.5.0"
@@ -33,3 +34,4 @@ ic-crypto-test-utils = { path = "../test_utils" }
 ic-crypto-test-utils-reproducible-rng = { path = "../test_utils/reproducible_rng" }
 ic-test-utilities = { path = "../../test_utilities" }
 ic-types-test-utils = { path = "../../types/types_test_utils" }
+rand_chacha = "0.3"

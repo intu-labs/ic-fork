@@ -158,6 +158,8 @@ pub struct ExecutionParameters {
     pub compute_allocation: ComputeAllocation,
     pub subnet_type: SubnetType,
     pub execution_mode: ExecutionMode,
+    pub subnet_memory_capacity: NumBytes,
+    pub subnet_memory_threshold: NumBytes,
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
@@ -266,6 +268,7 @@ pub enum ApiType {
     // For executing closures when a `Reply` is received
     ReplyCallback {
         time: Time,
+        caller: PrincipalId,
         #[serde(with = "serde_bytes")]
         incoming_payload: Vec<u8>,
         incoming_cycles: Cycles,
@@ -284,6 +287,7 @@ pub enum ApiType {
     // For executing closures when a `Reject` is received
     RejectCallback {
         time: Time,
+        caller: PrincipalId,
         reject_context: RejectContext,
         incoming_cycles: Cycles,
         call_context_id: CallContextId,
@@ -317,6 +321,7 @@ pub enum ApiType {
 
     // For executing the `canister_heartbeat` or `canister_global_timer` methods
     SystemTask {
+        caller: PrincipalId,
         /// System task to execute.
         /// Only `canister_heartbeat` and `canister_global_timer` are allowed.
         system_task: SystemMethod,
@@ -334,6 +339,7 @@ pub enum ApiType {
     ///
     /// See https://sdk.dfinity.org/docs/interface-spec/index.html#system-api-call
     Cleanup {
+        caller: PrincipalId,
         time: Time,
     },
 }
@@ -352,11 +358,13 @@ impl ApiType {
     }
 
     pub fn system_task(
+        caller: PrincipalId,
         system_task: SystemMethod,
         time: Time,
         call_context_id: CallContextId,
     ) -> Self {
         Self::SystemTask {
+            caller,
             time,
             call_context_id,
             outgoing_request: None,
@@ -427,6 +435,7 @@ impl ApiType {
     #[allow(clippy::too_many_arguments)]
     pub fn reply_callback(
         time: Time,
+        caller: PrincipalId,
         incoming_payload: Vec<u8>,
         incoming_cycles: Cycles,
         call_context_id: CallContextId,
@@ -435,6 +444,7 @@ impl ApiType {
     ) -> Self {
         Self::ReplyCallback {
             time,
+            caller,
             incoming_payload,
             incoming_cycles,
             call_context_id,
@@ -453,6 +463,7 @@ impl ApiType {
     #[allow(clippy::too_many_arguments)]
     pub fn reject_callback(
         time: Time,
+        caller: PrincipalId,
         reject_context: RejectContext,
         incoming_cycles: Cycles,
         call_context_id: CallContextId,
@@ -461,6 +472,7 @@ impl ApiType {
     ) -> Self {
         Self::RejectCallback {
             time,
+            caller,
             reject_context,
             incoming_cycles,
             call_context_id,
@@ -618,10 +630,24 @@ impl MemoryUsage {
     /// Returns `Err(HypervisorError::OutOfMemory)` and leaves `self` unchanged
     /// if either the canister memory limit or the subnet memory limit would be
     /// exceeded.
-    fn allocate_pages(&mut self, pages: usize) -> HypervisorResult<()> {
+    ///
+    /// Returns `Err(HypervisorError::InsufficientCyclesInMemoryGrow)` and
+    /// leaves `self` unchanged if freezing threshold check is needed for the
+    /// given API type and canister would be frozen after the allocation.
+    fn allocate_pages(
+        &mut self,
+        pages: usize,
+        api_type: &ApiType,
+        sandbox_safe_system_state: &SandboxSafeSystemState,
+    ) -> HypervisorResult<()> {
         let bytes = ic_replicated_state::num_bytes_try_from(NumWasmPages::from(pages))
             .map_err(|_| HypervisorError::OutOfMemory)?;
-        self.allocate_memory(bytes, NumBytes::from(0))
+        self.allocate_memory(
+            bytes,
+            NumBytes::from(0),
+            api_type,
+            sandbox_safe_system_state,
+        )
     }
 
     /// Unconditionally deallocates the given number of Wasm pages. Should only
@@ -645,10 +671,16 @@ impl MemoryUsage {
     /// Returns `Err(HypervisorError::OutOfMemory)` and leaves `self` unchanged
     /// if either the canister memory limit, the subnet memory limit, or the
     /// message memory limit would be exceeded.
+    ///
+    /// Returns `Err(HypervisorError::InsufficientCyclesInMemoryGrow)` and
+    /// leaves `self` unchanged if freezing threshold check is needed for the
+    /// given API type and canister would be frozen after the allocation.
     fn allocate_memory(
         &mut self,
         execution_bytes: NumBytes,
         message_bytes: NumBytes,
+        api_type: &ApiType,
+        sandbox_safe_system_state: &SandboxSafeSystemState,
     ) -> HypervisorResult<()> {
         let (new_usage, overflow) = self
             .current_usage
@@ -657,6 +689,12 @@ impl MemoryUsage {
         if overflow || new_usage > self.limit.get() {
             return Err(HypervisorError::OutOfMemory);
         }
+
+        sandbox_safe_system_state.check_freezing_threshold_for_memory_grow(
+            api_type,
+            self.current_usage,
+            NumBytes::new(new_usage),
+        )?;
 
         // The canister can increase its memory usage up to the reserved bytes without
         // decrementing the subnet available memory because it was already decremented
@@ -914,12 +952,12 @@ impl SystemApiImpl {
 
     fn get_msg_caller_id(&self, method_name: &str) -> Result<PrincipalId, HypervisorError> {
         match &self.api_type {
-            ApiType::Start { .. }
-            | ApiType::SystemTask { .. }
-            | ApiType::Cleanup { .. }
-            | ApiType::ReplyCallback { .. }
-            | ApiType::RejectCallback { .. } => Err(self.error_for(method_name)),
-            ApiType::Init { caller, .. }
+            ApiType::Start { .. } => Err(self.error_for(method_name)),
+            ApiType::SystemTask { caller, .. }
+            | ApiType::Cleanup { caller, .. }
+            | ApiType::ReplyCallback { caller, .. }
+            | ApiType::RejectCallback { caller, .. }
+            | ApiType::Init { caller, .. }
             | ApiType::Update { caller, .. }
             | ApiType::ReplicatedQuery { caller, .. }
             | ApiType::PreUpgrade { caller, .. }
@@ -1041,7 +1079,6 @@ impl SystemApiImpl {
                         self.sandbox_safe_system_state
                             .withdraw_cycles_for_transfer(
                                 self.memory_usage.current_usage,
-                                self.execution_parameters.compute_allocation,
                                 amount,
                             )?;
                         request.add_cycles(amount);
@@ -1215,7 +1252,12 @@ impl SystemApiImpl {
         };
         if self
             .memory_usage
-            .allocate_memory(NumBytes::from(0), reservation_bytes)
+            .allocate_memory(
+                NumBytes::from(0),
+                reservation_bytes,
+                &self.api_type,
+                &self.sandbox_safe_system_state,
+            )
             .is_err()
         {
             return abort(req, &mut self.sandbox_safe_system_state);
@@ -1223,7 +1265,6 @@ impl SystemApiImpl {
 
         match self.sandbox_safe_system_state.push_output_request(
             self.memory_usage.current_usage,
-            self.execution_parameters.compute_allocation,
             req,
             prepayment_for_response_execution,
             prepayment_for_response_transmission,
@@ -2014,32 +2055,28 @@ impl SystemApi for SystemApiImpl {
     }
 
     fn ic0_stable_grow(&mut self, additional_pages: u32) -> HypervisorResult<i32> {
-        let result = match &self.api_type {
-            ApiType::Init { .. }
-            | ApiType::SystemTask { .. }
-            | ApiType::Update { .. }
-            | ApiType::Cleanup { .. }
-            | ApiType::ReplicatedQuery { .. }
-            | ApiType::NonReplicatedQuery { .. }
-            | ApiType::PreUpgrade { .. }
-            | ApiType::ReplyCallback { .. }
-            | ApiType::RejectCallback { .. }
-            | ApiType::InspectMessage { .. }
-            | ApiType::Start { .. } => {
-                match self.memory_usage.allocate_pages(additional_pages as usize) {
-                    Ok(()) => {
-                        let res = self.stable_memory_mut().stable_grow(additional_pages);
-                        match &res {
-                            Err(_) | Ok(-1) => self
-                                .memory_usage
-                                .deallocate_pages(additional_pages as usize),
-                            _ => {}
-                        }
-                        res
-                    }
-                    Err(_err) => Ok(-1),
+        let result = match self.memory_usage.allocate_pages(
+            additional_pages as usize,
+            &self.api_type,
+            &self.sandbox_safe_system_state,
+        ) {
+            Ok(()) => {
+                let res = self.stable_memory_mut().stable_grow(additional_pages);
+                match &res {
+                    Err(_) | Ok(-1) => self
+                        .memory_usage
+                        .deallocate_pages(additional_pages as usize),
+                    _ => {}
                 }
+                res
             }
+            Err(err @ HypervisorError::InsufficientCyclesInMemoryGrow { .. }) => {
+                // Trap instead of returning -1 in order to give the developer
+                // more actionable error message. Otherwise, they cannot
+                // distinguish between out-of-memory and out-of-cycles.
+                Err(err)
+            }
+            Err(_err) => Ok(-1),
         };
         trace_syscall!(self, ic0_stable_grow, result, additional_pages);
         result
@@ -2052,19 +2089,7 @@ impl SystemApi for SystemApiImpl {
         size: u32,
         heap: &mut [u8],
     ) -> HypervisorResult<()> {
-        let result = match &self.api_type {
-            ApiType::Init { .. }
-            | ApiType::SystemTask { .. }
-            | ApiType::Update { .. }
-            | ApiType::Cleanup { .. }
-            | ApiType::ReplicatedQuery { .. }
-            | ApiType::NonReplicatedQuery { .. }
-            | ApiType::PreUpgrade { .. }
-            | ApiType::ReplyCallback { .. }
-            | ApiType::RejectCallback { .. }
-            | ApiType::InspectMessage { .. }
-            | ApiType::Start { .. } => self.stable_memory().stable_read(dst, offset, size, heap),
-        };
+        let result = self.stable_memory().stable_read(dst, offset, size, heap);
         trace_syscall!(
             self,
             ic0_stable_read,
@@ -2084,21 +2109,9 @@ impl SystemApi for SystemApiImpl {
         size: u32,
         heap: &[u8],
     ) -> HypervisorResult<()> {
-        let result = match &self.api_type {
-            ApiType::Init { .. }
-            | ApiType::SystemTask { .. }
-            | ApiType::Update { .. }
-            | ApiType::Cleanup { .. }
-            | ApiType::ReplicatedQuery { .. }
-            | ApiType::NonReplicatedQuery { .. }
-            | ApiType::PreUpgrade { .. }
-            | ApiType::ReplyCallback { .. }
-            | ApiType::RejectCallback { .. }
-            | ApiType::InspectMessage { .. }
-            | ApiType::Start { .. } => self
-                .stable_memory_mut()
-                .stable_write(offset, src, size, heap),
-        };
+        let result = self
+            .stable_memory_mut()
+            .stable_write(offset, src, size, heap);
         trace_syscall!(
             self,
             ic0_stable_write,
@@ -2112,50 +2125,34 @@ impl SystemApi for SystemApiImpl {
     }
 
     fn ic0_stable64_size(&self) -> HypervisorResult<u64> {
-        let result = match &self.api_type {
-            ApiType::Init { .. }
-            | ApiType::SystemTask { .. }
-            | ApiType::Update { .. }
-            | ApiType::Cleanup { .. }
-            | ApiType::ReplicatedQuery { .. }
-            | ApiType::NonReplicatedQuery { .. }
-            | ApiType::PreUpgrade { .. }
-            | ApiType::ReplyCallback { .. }
-            | ApiType::RejectCallback { .. }
-            | ApiType::InspectMessage { .. }
-            | ApiType::Start { .. } => self.stable_memory().stable64_size(),
-        };
+        let result = self.stable_memory().stable64_size();
         trace_syscall!(self, ic0_stable64_size, result);
         result
     }
 
     fn ic0_stable64_grow(&mut self, additional_pages: u64) -> HypervisorResult<i64> {
-        let result = match &self.api_type {
-            ApiType::Init { .. }
-            | ApiType::SystemTask { .. }
-            | ApiType::Update { .. }
-            | ApiType::Cleanup { .. }
-            | ApiType::ReplicatedQuery { .. }
-            | ApiType::NonReplicatedQuery { .. }
-            | ApiType::PreUpgrade { .. }
-            | ApiType::ReplyCallback { .. }
-            | ApiType::RejectCallback { .. }
-            | ApiType::InspectMessage { .. }
-            | ApiType::Start { .. } => {
-                match self.memory_usage.allocate_pages(additional_pages as usize) {
-                    Ok(()) => {
-                        let res = self.stable_memory_mut().stable64_grow(additional_pages);
-                        match &res {
-                            Err(_) | Ok(-1) => self
-                                .memory_usage
-                                .deallocate_pages(additional_pages as usize),
-                            _ => {}
-                        }
-                        res
-                    }
-                    Err(_err) => Ok(-1),
+        let result = match self.memory_usage.allocate_pages(
+            additional_pages as usize,
+            &self.api_type,
+            &self.sandbox_safe_system_state,
+        ) {
+            Ok(()) => {
+                let res = self.stable_memory_mut().stable64_grow(additional_pages);
+                match &res {
+                    Err(_) | Ok(-1) => self
+                        .memory_usage
+                        .deallocate_pages(additional_pages as usize),
+                    _ => {}
                 }
+                res
             }
+            Err(err @ HypervisorError::InsufficientCyclesInMemoryGrow { .. }) => {
+                // Trap instead of returning -1 in order to give the developer
+                // more actionable error message. Otherwise, they cannot
+                // distinguish between out-of-memory and out-of-cycles.
+                Err(err)
+            }
+            Err(_err) => Ok(-1),
         };
         trace_syscall!(self, ic0_stable64_grow, result, additional_pages);
         result
@@ -2168,19 +2165,7 @@ impl SystemApi for SystemApiImpl {
         size: u64,
         heap: &mut [u8],
     ) -> HypervisorResult<()> {
-        let result = match &self.api_type {
-            ApiType::Init { .. }
-            | ApiType::SystemTask { .. }
-            | ApiType::Update { .. }
-            | ApiType::Cleanup { .. }
-            | ApiType::ReplicatedQuery { .. }
-            | ApiType::NonReplicatedQuery { .. }
-            | ApiType::PreUpgrade { .. }
-            | ApiType::ReplyCallback { .. }
-            | ApiType::RejectCallback { .. }
-            | ApiType::InspectMessage { .. }
-            | ApiType::Start { .. } => self.stable_memory().stable64_read(dst, offset, size, heap),
-        };
+        let result = self.stable_memory().stable64_read(dst, offset, size, heap);
         trace_syscall!(
             self,
             ic0_stable64_read,
@@ -2211,21 +2196,9 @@ impl SystemApi for SystemApiImpl {
         size: u64,
         heap: &[u8],
     ) -> HypervisorResult<()> {
-        let result = match &self.api_type {
-            ApiType::Init { .. }
-            | ApiType::SystemTask { .. }
-            | ApiType::Update { .. }
-            | ApiType::Cleanup { .. }
-            | ApiType::ReplicatedQuery { .. }
-            | ApiType::NonReplicatedQuery { .. }
-            | ApiType::PreUpgrade { .. }
-            | ApiType::ReplyCallback { .. }
-            | ApiType::RejectCallback { .. }
-            | ApiType::InspectMessage { .. }
-            | ApiType::Start { .. } => self
-                .stable_memory_mut()
-                .stable64_write(offset, src, size, heap),
-        };
+        let result = self
+            .stable_memory_mut()
+            .stable64_write(offset, src, size, heap);
         trace_syscall!(
             self,
             ic0_stable64_write,
@@ -2363,8 +2336,17 @@ impl SystemApi for SystemApiImpl {
                 .map(NumBytes::new)
                 .ok_or(HypervisorError::OutOfMemory)?;
 
-            match self.memory_usage.allocate_memory(bytes, NumBytes::new(0)) {
+            match self.memory_usage.allocate_memory(
+                bytes,
+                NumBytes::new(0),
+                &self.api_type,
+                &self.sandbox_safe_system_state,
+            ) {
                 Ok(()) => Ok(()),
+                Err(err @ HypervisorError::InsufficientCyclesInMemoryGrow { .. }) => {
+                    // Return an out-of-cycles error instead of out-of-memory.
+                    Err(err)
+                }
                 Err(_err) => Err(HypervisorError::OutOfMemory),
             }
         };
@@ -2399,8 +2381,18 @@ impl SystemApi for SystemApiImpl {
         if resulting_size > MAX_STABLE_MEMORY_IN_BYTES / WASM_PAGE_SIZE_IN_BYTES as u64 {
             return Ok(StableGrowOutcome::Failure);
         }
-        match self.memory_usage.allocate_pages(additional_pages as usize) {
+        match self.memory_usage.allocate_pages(
+            additional_pages as usize,
+            &self.api_type,
+            &self.sandbox_safe_system_state,
+        ) {
             Ok(()) => Ok(StableGrowOutcome::Success),
+            Err(err @ HypervisorError::InsufficientCyclesInMemoryGrow { .. }) => {
+                // Trap instead of returning -1 in order to give the developer
+                // more actionable error message. Otherwise, they cannot
+                // distinguish between out-of-memory and out-of-cycles.
+                Err(err)
+            }
             Err(_) => Ok(StableGrowOutcome::Failure),
         }
     }

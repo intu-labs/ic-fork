@@ -258,7 +258,8 @@ impl GovernanceProto {
                 for followee in followees.followees.iter() {
                     let nid = followee.to_string();
                     if let Some(followee_set) = followee_index.get_mut(&nid) {
-                        followee_set.remove(neuron.id.as_ref().expect("Neuron must have an id"));
+                        followee_set
+                            .remove(neuron.id.as_ref().expect("Neuron must have a NeuronId"));
                         if followee_set.is_empty() {
                             followee_index.remove(&nid);
                         }
@@ -276,7 +277,6 @@ impl GovernanceProto {
         neuron: &Neuron,
     ) {
         let neuron_id = neuron.id.as_ref().expect("Neuron must have a NeuronId");
-
         neuron
             .permissions
             .iter()
@@ -1667,7 +1667,7 @@ impl Governance {
 
         // Re-borrow the neuron mutably to update now that the maturity has been
         // disbursed.
-        let mut neuron = self.get_neuron_result_mut(id)?;
+        let neuron = self.get_neuron_result_mut(id)?;
         neuron.maturity_e8s_equivalent = neuron
             .maturity_e8s_equivalent
             .saturating_sub(maturity_to_deduct);
@@ -1690,7 +1690,7 @@ impl Governance {
     /// - The proposal's decision status is ProposalStatusAdopted
     pub fn set_proposal_execution_status(&mut self, pid: u64, result: Result<(), GovernanceError>) {
         match self.proto.proposals.get_mut(&pid) {
-            Some(mut proposal) => {
+            Some(proposal) => {
                 // The proposal has to be adopted before it is executed.
                 assert_eq!(proposal.status(), ProposalDecisionStatus::Adopted);
                 match result {
@@ -3111,11 +3111,11 @@ impl Governance {
                 let mut specific_follower_neuron_ids = neuron_id_to_follower_neuron_ids_on_function
                     .get(current_neuron_id)
                     .cloned()
-                    .unwrap_or_else(|| BTreeSet::new());
+                    .unwrap_or_default();
                 let mut blanket_follower_neuron_ids = neuron_id_to_blanket_follower_neuron_ids
                     .get(current_neuron_id)
                     .cloned()
-                    .unwrap_or_else(|| BTreeSet::new());
+                    .unwrap_or_default();
                 follower_neuron_ids.append(&mut specific_follower_neuron_ids);
                 follower_neuron_ids.append(&mut blanket_follower_neuron_ids);
             }

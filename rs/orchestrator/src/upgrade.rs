@@ -30,7 +30,7 @@ const KEY_CHANGES_FILENAME: &str = "key_changed_metric.cbor";
 /// within.
 pub(crate) struct Upgrade {
     pub registry: Arc<RegistryHelper>,
-    metrics: Arc<OrchestratorMetrics>,
+    pub metrics: Arc<OrchestratorMetrics>,
     replica_process: Arc<Mutex<ReplicaProcess>>,
     cup_provider: Arc<CatchUpPackageProvider>,
     replica_version: ReplicaVersion,
@@ -207,10 +207,8 @@ impl Upgrade {
             // Only downloads the new image if it doesn't already exists locally, i.e. it
             // was previously downloaded by `prepare_upgrade_if_scheduled()`, see
             // below.
-            return self
-                .execute_upgrade(&new_replica_version)
-                .await
-                .map_err(OrchestratorError::from);
+            self.execute_upgrade(&new_replica_version).await?;
+            return Ok(Some(subnet_id));
         }
 
         // If we arrive here, we are on the newest replica version.
@@ -252,7 +250,7 @@ impl Upgrade {
                     registry_store_uri.uri,
                     registry_store_uri.hash,
                 );
-                let downloader = FileDownloader::new(Some(self.logger.clone()));
+                let downloader = FileDownloader::new(Some(self.logger.clone())).follow_redirects();
                 let local_store_location = tempfile::tempdir()
                     .expect("temporary location for local store download could not be created")
                     .into_path();
@@ -727,7 +725,7 @@ mod tests {
 
     use super::*;
     use ic_crypto_test_utils_canister_threshold_sigs::{
-        generate_key_transcript, CanisterThresholdSigTestEnvironment,
+        generate_key_transcript, CanisterThresholdSigTestEnvironment, IDkgParticipants,
     };
     use ic_crypto_test_utils_reproducible_rng::{reproducible_rng, ReproducibleRng};
     use ic_ic00_types::EcdsaCurve;
@@ -841,8 +839,14 @@ mod tests {
         }
 
         fn generate_key_transcript(&mut self) -> IDkgTranscript {
+            let (dealers, receivers) = self.env.choose_dealers_and_receivers(
+                &IDkgParticipants::AllNodesAsDealersAndReceivers,
+                &mut self.rng,
+            );
             generate_key_transcript(
                 &self.env,
+                &dealers,
+                &receivers,
                 AlgorithmId::ThresholdEcdsaSecp256k1,
                 &mut self.rng,
             )

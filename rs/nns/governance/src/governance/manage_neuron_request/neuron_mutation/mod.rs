@@ -51,10 +51,16 @@ impl GovernanceMutationProxy<'_> {
     }
 
     /// Retrieve a mutable reference to a neuron, if it exists.
-    pub fn get_neuron_mut(&mut self, neuron_id: &NeuronId) -> Result<&mut Neuron, GovernanceError> {
+    pub fn with_neuron_mut<R>(
+        &mut self,
+        neuron_id: &NeuronId,
+        modify: impl FnOnce(&mut Neuron) -> R,
+    ) -> Result<R, GovernanceError> {
         match self {
-            GovernanceMutationProxy::Committing(real) => real.get_neuron_mut(neuron_id),
-            GovernanceMutationProxy::Simulating(simulating) => simulating.get_neuron_mut(neuron_id),
+            GovernanceMutationProxy::Committing(real) => real.with_neuron_mut(neuron_id, modify),
+            GovernanceMutationProxy::Simulating(simulating) => {
+                simulating.with_neuron_mut(neuron_id, modify)
+            }
         }
     }
 
@@ -82,17 +88,21 @@ impl SimulatingGovernance<'_> {
     pub fn get_neuron(&self, neuron_id: &NeuronId) -> Result<&Neuron, GovernanceError> {
         self.neuron_map
             .get(&neuron_id.id)
-            .map(|n| Ok(n))
+            .map(Ok)
             .unwrap_or_else(|| self.real_gov.get_neuron(neuron_id))
     }
 
-    pub fn get_neuron_mut(&mut self, neuron_id: &NeuronId) -> Result<&mut Neuron, GovernanceError> {
+    pub fn with_neuron_mut<R>(
+        &mut self,
+        neuron_id: &NeuronId,
+        modify: impl FnOnce(&mut Neuron) -> R,
+    ) -> Result<R, GovernanceError> {
         let neuron = match self.neuron_map.entry(neuron_id.id) {
             Entry::Occupied(o) => o.into_mut(),
             Entry::Vacant(entry) => entry.insert(self.real_gov.get_neuron(neuron_id)?.clone()),
         };
 
-        Ok(neuron)
+        Ok(modify(neuron))
     }
 }
 
@@ -103,7 +113,9 @@ fn apply_neuron_deltas(
 ) -> Result<(), GovernanceError> {
     let now_seconds = gov_proxy.now();
     for (neuron_id, delta) in deltas {
-        delta.apply(gov_proxy.get_neuron_mut(neuron_id)?, now_seconds);
+        gov_proxy.with_neuron_mut(neuron_id, |neuron| {
+            delta.apply(neuron, now_seconds);
+        })?;
     }
     Ok(())
 }
@@ -173,7 +185,7 @@ pub trait GovernanceNeuronMutation: Send + Sync {
 pub struct NeuronDeltas {
     pub neuron_fees_e8s: i128,
     pub cached_neuron_stake_e8s: i128,
-    pub aging_timestamp_seconds: i128,
+    pub aging_since_timestamp_seconds: i128,
     pub dissolve_delay: u32,
     pub maturity_e8s_equivalent: i128,
     pub staked_maturity_e8s_equivalent: i128,
@@ -212,7 +224,7 @@ impl NeuronDeltas {
 
         neuron.aging_since_timestamp_seconds = saturating_add_or_subtract_u64_i128(
             neuron.aging_since_timestamp_seconds,
-            self.aging_timestamp_seconds,
+            self.aging_since_timestamp_seconds,
         );
     }
 }

@@ -20,7 +20,7 @@ use ic_agent::{
     export::Principal,
     Agent, AgentError,
 };
-// use ic_response_verification::MAX_VERIFICATION_VERSION;
+use ic_response_verification::MAX_VERIFICATION_VERSION;
 use ic_utils::interfaces::http_request::HeaderField;
 use ic_utils::{
     call::{AsyncCall, SyncCall},
@@ -153,11 +153,15 @@ pub async fn handler<V: Validate, C: HyperService<Body>>(
     uri_canister_id: Option<canister_id::UriHost>,
     host_canister_id: Option<canister_id::HostHeader>,
     query_param_canister_id: Option<canister_id::QueryParam>,
+    referer_host_canister_id: Option<canister_id::RefererHeaderHost>,
+    referer_query_param_canister_id: Option<canister_id::RefererHeaderQueryParam>,
     request: Request<Body>,
 ) -> Response<Body> {
     let uri_canister_id = uri_canister_id.map(|v| v.0);
     let host_canister_id = host_canister_id.map(|v| v.0);
     let query_param_canister_id = query_param_canister_id.map(|v| v.0);
+    let referer_canister_id = referer_host_canister_id.map(|v| v.0);
+    let referer_query_param_canister_id = referer_query_param_canister_id.map(|v| v.0);
 
     // Read the request body into a Vec
     let (parts, body) = request.into_parts();
@@ -189,7 +193,9 @@ pub async fn handler<V: Validate, C: HyperService<Body>>(
             &mut args.client,
             uri_canister_id
                 .or(host_canister_id)
-                .or(query_param_canister_id),
+                .or(query_param_canister_id)
+                .or(referer_canister_id)
+                .or(referer_query_param_canister_id),
         )
         .await;
 
@@ -235,6 +241,16 @@ async fn process_request_inner(
                     .unwrap())
             }
         }
+
+        #[cfg(feature = "dev_proxy")]
+        Some(_) if request.uri().path().starts_with("/api") => {
+            info!("forwarding");
+            let proxied_request = create_proxied_request(&addr.ip(), replica_uri.clone(), request)?;
+            let response = client.call(proxied_request).await?;
+            let (parts, body) = response.into_parts();
+            return Ok(Response::from_parts(parts, body.into()));
+        }
+
         Some(canister_id) => canister_id,
     };
 
@@ -287,10 +303,7 @@ async fn process_request_inner(
             http_request.uri.to_string().as_str(),
             header_fields.clone(),
             &http_request.body,
-            // Some(&u16::from(MAX_VERIFICATION_VERSION)),
-            // temporarily force response verification v1 until we are satisifed
-            // that asset canister v0.14.1 has been sufficiently circulated on mainnet
-            Some(&1),
+            Some(&u16::from(MAX_VERIFICATION_VERSION)),
         )
         .call()
         .await;

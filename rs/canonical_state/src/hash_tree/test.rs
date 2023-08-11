@@ -1,5 +1,6 @@
 use super::*;
 use crate::lazy_tree::LazyFork;
+use assert_matches::assert_matches;
 use crypto::recompute_digest;
 use ic_base_types::NumBytes;
 use ic_crypto_tree_hash::{
@@ -121,7 +122,9 @@ fn enumerate_leaves_and_empty_subtrees(
 }
 
 fn assert_same_witness(ht: &HashTree, wg: &WitnessGeneratorImpl, data: &LabeledTree<Vec<u8>>) {
-    let ht_witness = ht.witness::<Witness>(data);
+    let ht_witness = ht
+        .witness::<Witness>(data)
+        .expect("Failed to construct a witness.");
     let wg_witness = wg.witness(data).expect("failed to construct a witness");
 
     assert_eq!(
@@ -141,7 +144,7 @@ fn assert_same_witness(ht: &HashTree, wg: &WitnessGeneratorImpl, data: &LabeledT
 ///
 /// Also check that the new and old way of computing hash trees are equivalent.
 fn test_tree(t: &LabeledTree<Vec<u8>>) {
-    let hash_tree = hash_lazy_tree(&as_lazy(t));
+    let hash_tree = hash_lazy_tree(&as_lazy(t)).unwrap();
     let witness_gen = build_witness_gen(t);
     enumerate_leaves_and_empty_subtrees(t, |subtree| {
         assert_same_witness(&hash_tree, &witness_gen, &subtree);
@@ -202,6 +205,29 @@ fn test_many_children() {
 }
 
 #[test]
+fn test_too_many_recursions_error() {
+    // No error at the maximum allowed depth
+    let mut tree = LabeledTree::Leaf(b"12345".to_vec());
+    for i in 1..=MAX_RECURSION_DEPTH {
+        tree = LabeledTree::SubTree(flatmap! {
+            Label::from(i.to_string()) => tree,
+        });
+    }
+
+    assert!(hash_lazy_tree(&as_lazy(&tree)).is_ok());
+
+    // Error with one extra depth
+    tree = LabeledTree::SubTree(flatmap! {
+        Label::from(b"BOOM") => tree,
+    });
+
+    assert_matches!(
+        hash_lazy_tree(&as_lazy(&tree)),
+        Err(HashTreeError::RecursionTooDeep(MAX_RECURSION_DEPTH))
+    );
+}
+
+#[test]
 fn test_non_existence_proof() {
     let t = LabeledTree::SubTree(flatmap! {
         Label::from("a") => LabeledTree::Leaf(b"12345".to_vec()),
@@ -213,10 +239,12 @@ fn test_non_existence_proof() {
         }),
     });
 
-    let hash_tree = hash_lazy_tree(&as_lazy(&t));
-    let ht_witness = hash_tree.witness::<MixedHashTree>(&LabeledTree::SubTree(
-        flatmap! { Label::from("Z") => LabeledTree::Leaf(b"12345".to_vec()) },
-    ));
+    let hash_tree = hash_lazy_tree(&as_lazy(&t)).unwrap();
+    let ht_witness = hash_tree
+        .witness::<MixedHashTree>(&LabeledTree::SubTree(
+            flatmap! { Label::from("Z") => LabeledTree::Leaf(b"12345".to_vec()) },
+        ))
+        .expect("Failed to generate witness.");
 
     assert_eq!(&ht_witness.digest(), hash_tree.root_hash());
 
@@ -236,9 +264,11 @@ fn test_non_existence_proof() {
         ht_witness
     );
 
-    let ht_witness = hash_tree.witness::<MixedHashTree>(&LabeledTree::SubTree(
-        flatmap! { Label::from("b") => LabeledTree::Leaf(b"12345".to_vec()) },
-    ));
+    let ht_witness = hash_tree
+        .witness::<MixedHashTree>(&LabeledTree::SubTree(
+            flatmap! { Label::from("b") => LabeledTree::Leaf(b"12345".to_vec()) },
+        ))
+        .expect("Failed to generate witness.");
 
     assert_eq!(&ht_witness.digest(), hash_tree.root_hash());
 
@@ -258,9 +288,11 @@ fn test_non_existence_proof() {
         ht_witness
     );
 
-    let ht_witness = hash_tree.witness::<MixedHashTree>(&LabeledTree::SubTree(
-        flatmap! { Label::from("d") => LabeledTree::Leaf(b"12345".to_vec()) },
-    ));
+    let ht_witness = hash_tree
+        .witness::<MixedHashTree>(&LabeledTree::SubTree(
+            flatmap! { Label::from("d") => LabeledTree::Leaf(b"12345".to_vec()) },
+        ))
+        .expect("Failed to generate witness.");
 
     assert_eq!(&ht_witness.digest(), hash_tree.root_hash());
 
@@ -292,7 +324,7 @@ proptest! {
 fn simple_state_old_vs_new_hashing() {
     let state = ReplicatedState::new(subnet_test_id(1), SubnetType::Application);
 
-    let hash_tree = hash_lazy_tree(&LazyTree::from(&state));
+    let hash_tree = hash_lazy_tree(&LazyTree::from(&state)).unwrap();
     let crypto_hash_tree = crypto_hash_lazy_tree(&LazyTree::from(&state));
 
     assert_eq!(hash_tree, crypto_hash_tree);
@@ -305,7 +337,7 @@ fn many_canister_state_old_vs_new_hashing() {
         insert_dummy_canister(&mut state, canister_test_id(i), user_test_id(24).get());
     }
 
-    let hash_tree = hash_lazy_tree(&LazyTree::from(&state));
+    let hash_tree = hash_lazy_tree(&LazyTree::from(&state)).unwrap();
     let crypto_hash_tree = crypto_hash_lazy_tree(&LazyTree::from(&state));
 
     assert_eq!(hash_tree, crypto_hash_tree);
@@ -327,7 +359,7 @@ fn large_history_state_old_vs_new_hashing() {
         );
     }
 
-    let hash_tree = hash_lazy_tree(&LazyTree::from(&state));
+    let hash_tree = hash_lazy_tree(&LazyTree::from(&state)).unwrap();
     let crypto_hash_tree = crypto_hash_lazy_tree(&LazyTree::from(&state));
 
     assert_eq!(hash_tree, crypto_hash_tree);
@@ -351,7 +383,7 @@ fn large_history_and_canisters_state_old_vs_new_hashing() {
         );
     }
 
-    let hash_tree = hash_lazy_tree(&LazyTree::from(&state));
+    let hash_tree = hash_lazy_tree(&LazyTree::from(&state)).unwrap();
     let crypto_hash_tree = crypto_hash_lazy_tree(&LazyTree::from(&state));
 
     assert_eq!(hash_tree, crypto_hash_tree);

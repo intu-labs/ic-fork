@@ -6,8 +6,8 @@ edition = "2021"
 
 [dependencies]
 
-candid = "0.8.1"
-ciborium = "0.2"
+candid = { workspace = true }
+ciborium = { workspace = true }
 dfn_candid = { path = "../../../rust_canisters/dfn_candid" }
 dfn_core = { path = "../../../rust_canisters/dfn_core" }
 dfn_http_metrics = { path = "../../../rust_canisters/dfn_http_metrics" }

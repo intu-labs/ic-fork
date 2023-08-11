@@ -16,7 +16,7 @@ ic-btc-consensus = { path = "../bitcoin/consensus" }
 ic-config = { path = "../config" }
 ic-consensus = { path = "../consensus" }
 ic-crypto = { path = "../crypto" }
-ic-crypto-sha = { path = "../crypto/sha" }
+ic-crypto-sha2 = { path = "../crypto/sha2" }
 ic-crypto-tls-interfaces = { path = "../crypto/tls_interfaces" }
 ic-crypto-utils-threshold-sig = { path = "../crypto/utils/threshold_sig" }
 ic-cycles-account-manager = { path = "../cycles_account_manager" }
@@ -34,7 +34,6 @@ ic-messaging = { path = "../messaging" }
 ic-metrics = { path = "../monitoring/metrics" }
 ic-http-endpoints-metrics = { path = "../http_endpoints/metrics" }
 ic-nns-constants = { path = "../nns/constants" }
-ic-onchain-observability-server = { path = "../monitoring/onchain_observability/server" }
 ic-p2p = { path = "../p2p" }
 ic-pprof = { path = "../monitoring/pprof" }
 ic-protobuf = { path = "../protobuf" }
@@ -44,7 +43,6 @@ ic-registry-local-store = { path = "../registry/local_store" }
 ic-registry-subnet-type = { path = "../registry/subnet_type" }
 ic-replica-setup-ic-network =  { path = "./setup_ic_network" }
 ic-replicated-state = { path = "../replicated_state" }
-ic-backtrace = { path = "../monitoring/backtrace" }
 ic-state-manager = { path = "../state_manager" }
 ic-sys = { path = "../sys" }
 ic-types = { path = "../types/types" }
@@ -73,6 +71,10 @@ tokio = { version = "1.15.0", features = ["full"] }
 tracing = "0.1.13"
 tower = { version = "0.4.11", features = ["util"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# this library uses libunwind, which is only applicable to Linux
+ic-backtrace = { path = "../monitoring/backtrace" }
+
 [dev-dependencies]
 assert_cmd = "0.12"
 canister-test = { path = "../rust_canisters/canister_test" }
@@ -86,11 +88,6 @@ wat = "1.0.52"
 [[bench]]
 name = "calls"
 harness = false
-
-# TODO(RPL-268)
-# [[bench]]
-# name = "execution_only_update"
-# harness = false
 
 [[bin]]
 name = "replica"

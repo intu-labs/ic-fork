@@ -3,7 +3,6 @@ use ic_config::subnet_config::SchedulerConfig;
 use ic_constants::SMALL_APP_SUBNET_MAX_SIZE;
 use ic_ic00_types::{CanisterIdRecord, CanisterSettingsArgs, Payload, UpdateSettingsArgs, IC_00};
 use ic_interfaces::execution_environment::SystemApi;
-use ic_interfaces::messages::CanisterMessage;
 use ic_logger::replica_logger::no_op_logger;
 use ic_nns_constants::CYCLES_MINTING_CANISTER_ID;
 use ic_registry_routing_table::CanisterIdRange;
@@ -23,7 +22,8 @@ use ic_test_utilities::{
 };
 use ic_types::nominal_cycles::NominalCycles;
 use ic_types::{
-    messages::MAX_INTER_CANISTER_PAYLOAD_IN_BYTES, ComputeAllocation, Cycles, NumInstructions,
+    messages::{CanisterMessage, MAX_INTER_CANISTER_PAYLOAD_IN_BYTES},
+    ComputeAllocation, Cycles, NumInstructions,
 };
 use prometheus::IntCounter;
 use std::collections::BTreeSet;
@@ -63,12 +63,12 @@ fn push_output_request_fails_not_enough_cycles_for_request() {
         cycles_account_manager,
         &NetworkTopology::default(),
         SchedulerConfig::application_subnet().dirty_page_overhead,
+        ComputeAllocation::default(),
     );
 
     assert_eq!(
         sandbox_safe_system_state.push_output_request(
             NumBytes::from(0),
-            ComputeAllocation::default(),
             request.clone(),
             Cycles::zero(),
             Cycles::zero(),
@@ -113,12 +113,12 @@ fn push_output_request_fails_not_enough_cycles_for_response() {
         cycles_account_manager,
         &NetworkTopology::default(),
         SchedulerConfig::application_subnet().dirty_page_overhead,
+        ComputeAllocation::default(),
     );
 
     assert_eq!(
         sandbox_safe_system_state.push_output_request(
             NumBytes::from(0),
-            ComputeAllocation::default(),
             request.clone(),
             prepayment_for_response_execution,
             prepayment_for_response_transmission
@@ -145,6 +145,7 @@ fn push_output_request_succeeds_with_enough_cycles() {
         cycles_account_manager,
         &NetworkTopology::default(),
         SchedulerConfig::application_subnet().dirty_page_overhead,
+        ComputeAllocation::default(),
     );
 
     let prepayment_for_response_execution =
@@ -155,7 +156,6 @@ fn push_output_request_succeeds_with_enough_cycles() {
     assert_eq!(
         sandbox_safe_system_state.push_output_request(
             NumBytes::from(0),
-            ComputeAllocation::default(),
             RequestBuilder::default()
                 .sender(canister_test_id(0))
                 .build(),
@@ -187,6 +187,7 @@ fn correct_charging_source_canister_for_a_request() {
         cycles_account_manager,
         &NetworkTopology::default(),
         SchedulerConfig::application_subnet().dirty_page_overhead,
+        ComputeAllocation::default(),
     );
 
     let request = RequestBuilder::default()
@@ -210,7 +211,6 @@ fn correct_charging_source_canister_for_a_request() {
     sandbox_safe_system_state
         .push_output_request(
             NumBytes::from(0),
-            ComputeAllocation::default(),
             request,
             prepayment_for_response_execution,
             prepayment_for_response_transmission,
@@ -334,6 +334,7 @@ fn is_controller_test() {
         CyclesAccountManagerBuilder::new().build(),
         &NetworkTopology::default(),
         SchedulerConfig::application_subnet().dirty_page_overhead,
+        ComputeAllocation::default(),
     );
 
     // Users IDs 1 and 2 are controllers, hence is_controller should return true,
@@ -417,6 +418,7 @@ fn test_inter_canister_call(
         cycles_account_manager,
         topo,
         SchedulerConfig::application_subnet().dirty_page_overhead,
+        ComputeAllocation::default(),
     );
 
     let request = RequestBuilder::default()
@@ -435,7 +437,6 @@ fn test_inter_canister_call(
     sandbox_safe_system_state
         .push_output_request(
             NumBytes::from(0),
-            ComputeAllocation::default(),
             request,
             prepayment_for_response_execution,
             prepayment_for_response_transmission,

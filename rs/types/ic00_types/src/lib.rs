@@ -19,6 +19,7 @@ use ic_protobuf::{proxy::ProxyDecodeError, registry::crypto::v1 as pb_registry_c
 use num_traits::cast::ToPrimitive;
 pub use provisional::{ProvisionalCreateCanisterWithCyclesArgs, ProvisionalTopUpCanisterArgs};
 use serde::{Deserializer, Serialize};
+use serde_bytes::ByteBuf;
 use std::mem::size_of;
 use std::{collections::BTreeSet, convert::TryFrom, error::Error, fmt, slice::Iter, str::FromStr};
 use strum_macros::{Display, EnumIter, EnumString};
@@ -344,10 +345,10 @@ impl CanisterChange {
     pub fn count_bytes(&self) -> NumBytes {
         let controllers_memory_size = match &self.details {
             CanisterChangeDetails::CanisterCreation(canister_creation) => {
-                canister_creation.controllers().len() * size_of::<PrincipalId>()
+                std::mem::size_of_val(canister_creation.controllers())
             }
             CanisterChangeDetails::CanisterControllersChange(canister_controllers_change) => {
-                canister_controllers_change.controllers().len() * size_of::<PrincipalId>()
+                std::mem::size_of_val(canister_controllers_change.controllers())
             }
             CanisterChangeDetails::CanisterCodeDeployment(_)
             | CanisterChangeDetails::CanisterCodeUninstall => 0,
@@ -841,12 +842,13 @@ impl fmt::Display for CanisterStatusType {
 
 /// The mode with which a canister is installed.
 #[derive(
-    Clone, Debug, Deserialize, PartialEq, Serialize, Eq, EnumString, Hash, CandidType, Copy,
+    Clone, Debug, Deserialize, PartialEq, Serialize, Eq, EnumString, Hash, CandidType, Copy, Default,
 )]
 pub enum CanisterInstallMode {
     /// A fresh install of a new canister.
     #[serde(rename = "install")]
     #[strum(serialize = "install")]
+    #[default]
     Install = 1,
     /// Reinstalling a canister that was already installed.
     #[serde(rename = "reinstall")]
@@ -856,12 +858,6 @@ pub enum CanisterInstallMode {
     #[serde(rename = "upgrade")]
     #[strum(serialize = "upgrade")]
     Upgrade = 3,
-}
-
-impl Default for CanisterInstallMode {
-    fn default() -> Self {
-        CanisterInstallMode::Install
-    }
 }
 
 impl CanisterInstallMode {
@@ -975,6 +971,7 @@ pub struct InstallCodeArgs {
     pub canister_id: PrincipalId,
     #[serde(with = "serde_bytes")]
     pub wasm_module: Vec<u8>,
+    #[serde(with = "serde_bytes")]
     pub arg: Vec<u8>,
     pub compute_allocation: Option<candid::Nat>,
     pub memory_allocation: Option<candid::Nat>,
@@ -1386,7 +1383,18 @@ impl SetupInitialDKGResponse {
 /// (variant { secp256k1; })
 /// ```
 #[derive(
-    CandidType, Copy, Clone, Debug, PartialOrd, Ord, PartialEq, Eq, Serialize, Deserialize, Hash,
+    CandidType,
+    Copy,
+    Clone,
+    Debug,
+    PartialOrd,
+    Ord,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Hash,
+    EnumIter,
 )]
 pub enum EcdsaCurve {
     #[serde(rename = "secp256k1")]
@@ -1513,21 +1521,21 @@ fn ecdsa_key_id_round_trip() {
 }
 
 #[derive(CandidType, Clone, Debug, PartialEq, Eq)]
-pub struct DerivationPath(Vec<Vec<u8>>);
+pub struct DerivationPath(Vec<ByteBuf>);
 
 impl DerivationPath {
-    pub fn new(path: Vec<Vec<u8>>) -> Self {
+    pub fn new(path: Vec<ByteBuf>) -> Self {
         Self(path)
     }
 
-    pub fn get(&self) -> Vec<Vec<u8>> {
+    pub fn get(&self) -> Vec<ByteBuf> {
         self.0.clone()
     }
 }
 
 impl<'de> Deserialize<'de> for DerivationPath {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let decoded: Vec<Vec<u8>> = Deserialize::deserialize(deserializer)?;
+        let decoded: Vec<ByteBuf> = Deserialize::deserialize(deserializer)?;
         if decoded.len() > MAXIMUM_DERIVATION_PATH_LENGTH {
             Err(serde::de::Error::custom(format!(
                 "Derivation path length {} exceeds maximum allowed {}",
@@ -1545,7 +1553,7 @@ impl Payload<'_> for DerivationPath {}
 #[test]
 fn verify_max_derivation_path_length() {
     for i in 0..=MAXIMUM_DERIVATION_PATH_LENGTH {
-        let path = DerivationPath::new(vec![vec![0_u8, 32]; i]);
+        let path = DerivationPath::new(vec![ByteBuf::from(vec![0_u8, 32]); i]);
         let encoded = path.encode();
         assert_eq!(DerivationPath::decode(&encoded).unwrap(), path);
 
@@ -1581,7 +1589,7 @@ fn verify_max_derivation_path_length() {
     }
 
     for i in MAXIMUM_DERIVATION_PATH_LENGTH + 1..=MAXIMUM_DERIVATION_PATH_LENGTH + 100 {
-        let path = DerivationPath::new(vec![vec![0_u8, 32]; i]);
+        let path = DerivationPath::new(vec![ByteBuf::from(vec![0_u8, 32]); i]);
         let encoded = path.encode();
         let res = DerivationPath::decode(&encoded).unwrap_err();
         assert_eq!(res.code(), ErrorCode::InvalidManagementPayload);
@@ -1646,6 +1654,7 @@ impl Payload<'_> for SignWithECDSAArgs {}
 /// Struct used to return an ECDSA signature.
 #[derive(CandidType, Deserialize, Debug)]
 pub struct SignWithECDSAReply {
+    #[serde(with = "serde_bytes")]
     pub signature: Vec<u8>,
 }
 
@@ -1677,7 +1686,9 @@ impl Payload<'_> for ECDSAPublicKeyArgs {}
 /// ```
 #[derive(CandidType, Deserialize, Debug)]
 pub struct ECDSAPublicKeyResponse {
+    #[serde(with = "serde_bytes")]
     pub public_key: Vec<u8>,
+    #[serde(with = "serde_bytes")]
     pub chain_code: Vec<u8>,
 }
 

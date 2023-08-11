@@ -14,8 +14,8 @@ pub enum TryFromError {
 /// handling, not for end-users. They are also used for classification
 /// of user-facing errors.
 ///
-/// See https://sdk.dfinity.org/docs/interface-spec/index.html#reject-codes
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// See <https://sdk.dfinity.org/docs/interface-spec/index.html#reject-codes>
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, EnumIter)]
 pub enum RejectCode {
     SysFatal = 1,
     SysTransient = 2,
@@ -104,6 +104,9 @@ impl From<ErrorCode> for RejectCode {
             CanisterNotHostedBySubnet => CanisterReject,
             QueryTimeLimitExceeded => CanisterError,
             QueryCallGraphInternal => CanisterError,
+            InsufficientCyclesInComputeAllocation => CanisterError,
+            InsufficientCyclesInMemoryAllocation => CanisterError,
+            InsufficientCyclesInMemoryGrow => CanisterError,
         }
     }
 }
@@ -159,6 +162,9 @@ pub enum ErrorCode {
     CompositeQueryCalledInReplicatedMode = 527,
     QueryTimeLimitExceeded = 528,
     QueryCallGraphInternal = 529,
+    InsufficientCyclesInComputeAllocation = 530,
+    InsufficientCyclesInMemoryAllocation = 531,
+    InsufficientCyclesInMemoryGrow = 532,
 }
 
 impl TryFrom<u64> for ErrorCode {
@@ -208,6 +214,9 @@ impl TryFrom<u64> for ErrorCode {
             527 => Ok(ErrorCode::CompositeQueryCalledInReplicatedMode),
             528 => Ok(ErrorCode::QueryTimeLimitExceeded),
             529 => Ok(ErrorCode::QueryCallGraphInternal),
+            530 => Ok(ErrorCode::InsufficientCyclesInComputeAllocation),
+            531 => Ok(ErrorCode::InsufficientCyclesInMemoryAllocation),
+            532 => Ok(ErrorCode::InsufficientCyclesInMemoryGrow),
             _ => Err(TryFromError::ValueOutOfRange(err)),
         }
     }
@@ -299,7 +308,10 @@ impl UserError {
             | ErrorCode::QueryCallGraphTooDeep
             | ErrorCode::QueryCallGraphTotalInstructionLimitExceeded
             | ErrorCode::CompositeQueryCalledInReplicatedMode
-            | ErrorCode::QueryTimeLimitExceeded => false,
+            | ErrorCode::QueryTimeLimitExceeded
+            | ErrorCode::InsufficientCyclesInComputeAllocation
+            | ErrorCode::InsufficientCyclesInMemoryAllocation
+            | ErrorCode::InsufficientCyclesInMemoryGrow => false,
         }
     }
 

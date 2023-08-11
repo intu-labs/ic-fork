@@ -11,13 +11,12 @@ use crate::{
 use ic_base_types::PrincipalId;
 use ic_btc_types_internal::BitcoinAdapterResponse;
 use ic_error_types::{ErrorCode, UserError};
-use ic_interfaces::{execution_environment::CanisterOutOfCyclesError, messages::CanisterMessage};
+use ic_interfaces::execution_environment::CanisterOutOfCyclesError;
 use ic_registry_routing_table::RoutingTable;
 use ic_registry_subnet_type::SubnetType;
-use ic_types::messages::Ingress;
 use ic_types::{
     ingress::IngressStatus,
-    messages::{CallbackId, MessageId, RequestOrResponse, Response},
+    messages::{CallbackId, CanisterMessage, Ingress, MessageId, RequestOrResponse, Response},
     xnet::QueueId,
     CanisterId, MemoryAllocation, NumBytes, SubnetId, Time,
 };
@@ -41,20 +40,15 @@ pub enum InputQueueType {
 }
 
 /// Next input queue: round-robin across local subnet; ingress; or remote subnet.
-#[derive(Clone, Copy, Eq, Debug, PartialEq)]
+#[derive(Clone, Copy, Eq, Debug, PartialEq, Default)]
 pub enum NextInputQueue {
     /// Local subnet input messages.
+    #[default]
     LocalSubnet,
     /// Ingress messages.
     Ingress,
     /// Remote subnet input messages.
     RemoteSubnet,
-}
-
-impl Default for NextInputQueue {
-    fn default() -> Self {
-        NextInputQueue::LocalSubnet
-    }
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq, Debug, Hash)]
@@ -812,15 +806,15 @@ impl ReplicatedState {
     }
 
     /// Splits the replicated state as part of subnet splitting phase 1, retaining
-    /// only the canisters of `new_subnet_id` (as determined by the provided routing
+    /// only the canisters of `subnet_id` (as determined by the provided routing
     /// table).
     ///
     /// A subnet split starts with a subnet A and results in two subnets, A' and B.
     /// For the sake of clarity, comments refer to the two resulting subnets as
     /// *subnet A'* and *subnet B*; and to the original subnet as *subnet A*.
     /// Because subnet A' retains the subnet ID of subnet A, it is identified by
-    /// having `new_subnet_id == self.own_subnet_id`. Conversely, subnet B has
-    /// `new_subnet_id != self.own_subnet_id`.
+    /// having `subnet_id == self.own_subnet_id`. Conversely, subnet B has
+    /// `subnet_id != self.own_subnet_id`.
     ///
     /// This first phase only consists of:
     ///  * Splitting the canisters hosted by A among A' and B, as determined by the
@@ -835,7 +829,12 @@ impl ReplicatedState {
     ///
     /// Internal adjustments to the various parts of the state happen in a second
     /// phase, during subnet startup (see [`Self::after_split()`]).
-    pub fn split(self, new_subnet_id: SubnetId, routing_table: &RoutingTable) -> Self {
+    pub fn split(
+        self,
+        subnet_id: SubnetId,
+        routing_table: &RoutingTable,
+        new_subnet_batch_time: Option<Time>,
+    ) -> Result<Self, String> {
         // Take apart `self` and put it back together, in order for the compiler to
         // enforce an explicit decision whenever new fields are added.
         let Self {
@@ -852,7 +851,7 @@ impl ReplicatedState {
         //
         // TODO: Validate that canisters are split across no more than 2 subnets.
         canister_states
-            .retain(|canister_id, _| routing_table.route(canister_id.get()) == Some(new_subnet_id));
+            .retain(|canister_id, _| routing_table.route(canister_id.get()) == Some(subnet_id));
 
         // All subnet messages (ingress and canister) only remain on subnet A' because:
         //
@@ -863,21 +862,21 @@ impl ReplicatedState {
         //  * Some requests (ingress or canister) will fail if the target canister has
         //    been migrated away, but the alternative would require unpacking and acting
         //    on the contents of arbitrary methods' payloads.
-        if metadata.own_subnet_id != new_subnet_id {
+        if metadata.own_subnet_id != subnet_id {
             // On subnet B, start with empty subnet queues.
             subnet_queues = CanisterQueues::default();
         }
 
         // Obtain a new metadata state for subnet B. No-op for subnet A' (apart from
         // setting the split marker).
-        let metadata = metadata.split(new_subnet_id);
+        let metadata = metadata.split(subnet_id, new_subnet_batch_time)?;
 
-        Self {
+        Ok(Self {
             canister_states,
             metadata,
             subnet_queues,
             consensus_queue,
-        }
+        })
     }
 
     /// Makes adjustments to the replicated state, in the second phase of a subnet

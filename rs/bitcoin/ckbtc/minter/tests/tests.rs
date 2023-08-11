@@ -16,7 +16,7 @@ use ic_ckbtc_minter::updates::update_balance::{UpdateBalanceArgs, UpdateBalanceE
 use ic_ckbtc_minter::{
     Log, MinterInfo, CKBTC_LEDGER_MEMO_SIZE, MIN_RELAY_FEE_PER_VBYTE, MIN_RESUBMISSION_DELAY,
 };
-use ic_icrc1_ledger::{ArchiveOptions, InitArgs as LedgerInitArgs, LedgerArgument};
+use ic_icrc1_ledger::{InitArgsBuilder as LedgerInitArgsBuilder, LedgerArgument};
 use ic_state_machine_tests::{Cycles, StateMachine, StateMachineBuilder, WasmResult};
 use ic_test_utilities_load_wasm::load_wasm;
 use icrc_ledger_types::icrc1::account::Account;
@@ -78,29 +78,11 @@ fn kyt_wasm() -> Vec<u8> {
 }
 
 fn install_ledger(env: &StateMachine) -> CanisterId {
-    let args = LedgerArgument::Init(LedgerInitArgs {
-        minting_account: Account {
-            owner: Principal::anonymous(),
-            subaccount: None,
-        },
-        initial_balances: vec![],
-        transfer_fee: 0,
-        token_name: "Test Token".to_string(),
-        token_symbol: "TST".to_string(),
-        metadata: vec![],
-        archive_options: ArchiveOptions {
-            trigger_threshold: 0,
-            num_blocks_to_archive: 0,
-            node_max_memory_size_bytes: None,
-            max_message_size_bytes: None,
-            controller_id: Default::default(),
-            cycles_for_archive_creation: None,
-            max_transactions_per_response: None,
-        },
-        fee_collector_account: None,
-        max_memo_length: None,
-        feature_flags: None,
-    });
+    let args = LedgerArgument::Init(
+        LedgerInitArgsBuilder::for_tests()
+            .with_transfer_fee(0)
+            .build(),
+    );
     env.install_canister(ledger_wasm(), Encode!(&args).unwrap(), None)
         .unwrap()
 }
@@ -111,7 +93,7 @@ fn install_minter(env: &StateMachine, ledger_id: CanisterId) -> CanisterId {
         /// The name of the [EcdsaKeyId]. Use "dfx_test_key" for local replica and "test_key_1" for
         /// a testing key for testnet and mainnet
         ecdsa_key_name: "dfx_test_key".parse().unwrap(),
-        retrieve_btc_min_amount: 0,
+        retrieve_btc_min_amount: 2000,
         ledger_id,
         max_time_in_queue_nanos: 0,
         min_confirmations: Some(1),
@@ -159,6 +141,66 @@ fn test_install_ckbtc_minter_canister() {
 }
 
 #[test]
+fn test_wrong_upgrade_parameter() {
+    let env = StateMachine::new();
+
+    // wrong init args
+
+    let args = MinterArg::Init(CkbtcMinterInitArgs {
+        btc_network: Network::Regtest.into(),
+        ecdsa_key_name: "".into(),
+        retrieve_btc_min_amount: 100_000,
+        ledger_id: CanisterId::from_u64(0),
+        max_time_in_queue_nanos: MAX_TIME_IN_QUEUE.as_nanos() as u64,
+        min_confirmations: Some(6_u32),
+        mode: Mode::GeneralAvailability,
+        kyt_fee: Some(1001),
+        kyt_principal: None,
+    });
+    let args = Encode!(&args).unwrap();
+    if env.install_canister(minter_wasm(), args, None).is_ok() {
+        panic!("init expected to fail")
+    }
+    let args = MinterArg::Init(CkbtcMinterInitArgs {
+        btc_network: Network::Regtest.into(),
+        ecdsa_key_name: "some_key".into(),
+        retrieve_btc_min_amount: 100_000,
+        ledger_id: CanisterId::from_u64(0),
+        max_time_in_queue_nanos: MAX_TIME_IN_QUEUE.as_nanos() as u64,
+        min_confirmations: Some(6_u32),
+        mode: Mode::GeneralAvailability,
+        kyt_fee: Some(1001),
+        kyt_principal: None,
+    });
+    let args = Encode!(&args).unwrap();
+    if env.install_canister(minter_wasm(), args, None).is_ok() {
+        panic!("init expected to fail")
+    }
+
+    // install the minter
+
+    let minter_id = install_minter(&env, CanisterId::from(0));
+
+    // upgrade only with wrong parameters
+
+    let upgrade_args = UpgradeArgs {
+        retrieve_btc_min_amount: Some(100),
+        min_confirmations: None,
+        max_time_in_queue_nanos: Some(100),
+        mode: Some(Mode::ReadOnly),
+        kyt_principal: None,
+        kyt_fee: None,
+    };
+    let minter_arg = MinterArg::Upgrade(Some(upgrade_args));
+    if env
+        .upgrade_canister(minter_id, minter_wasm(), Encode!(&minter_arg).unwrap())
+        .is_ok()
+    {
+        panic!("upgrade expected to fail")
+    }
+}
+
+#[test]
 fn test_upgrade_read_only() {
     let env = StateMachine::new();
     let ledger_id = install_ledger(&env);
@@ -170,7 +212,7 @@ fn test_upgrade_read_only() {
 
     // upgrade
     let upgrade_args = UpgradeArgs {
-        retrieve_btc_min_amount: Some(100),
+        retrieve_btc_min_amount: Some(2000),
         min_confirmations: None,
         max_time_in_queue_nanos: Some(100),
         mode: Some(Mode::ReadOnly),
@@ -240,7 +282,7 @@ fn test_upgrade_restricted() {
 
     // upgrade
     let upgrade_args = UpgradeArgs {
-        retrieve_btc_min_amount: Some(100),
+        retrieve_btc_min_amount: Some(2000),
         min_confirmations: None,
         max_time_in_queue_nanos: Some(100),
         mode: Some(Mode::RestrictedTo(vec![authorized_principal])),
@@ -391,7 +433,7 @@ fn test_minter() {
         min_confirmations: Some(6_u32),
         mode: Mode::GeneralAvailability,
         kyt_fee: Some(1001),
-        kyt_principal: None,
+        kyt_principal: Some(CanisterId::from(0)),
     });
     let args = Encode!(&args).unwrap();
     let minter_id = env.install_canister(minter_wasm(), args, None).unwrap();
@@ -461,29 +503,13 @@ impl CkBtcSetup {
         env.install_existing_canister(
             ledger_id,
             ledger_wasm(),
-            Encode!(&LedgerArgument::Init(LedgerInitArgs {
-                minting_account: Account {
-                    owner: minter_id.into(),
-                    subaccount: None,
-                },
-                initial_balances: vec![],
-                transfer_fee: TRANSFER_FEE,
-                token_name: "ckBTC".to_string(),
-                token_symbol: "ckBTC".to_string(),
-                metadata: vec![],
-                archive_options: ArchiveOptions {
-                    trigger_threshold: 0,
-                    num_blocks_to_archive: 0,
-                    node_max_memory_size_bytes: None,
-                    max_message_size_bytes: None,
-                    controller_id: Default::default(),
-                    cycles_for_archive_creation: None,
-                    max_transactions_per_response: None,
-                },
-                fee_collector_account: None,
-                max_memo_length: Some(CKBTC_LEDGER_MEMO_SIZE),
-                feature_flags: None,
-            }))
+            Encode!(&LedgerArgument::Init(
+                LedgerInitArgsBuilder::with_symbol_and_name("ckBTC", "ckBTC")
+                    .with_minting_account(minter_id.get().0)
+                    .with_transfer_fee(TRANSFER_FEE)
+                    .with_max_memo_length(CKBTC_LEDGER_MEMO_SIZE)
+                    .build()
+            ))
             .unwrap(),
         )
         .expect("failed to install the ledger");
@@ -1437,4 +1463,72 @@ fn test_ledger_memo() {
     );
     let decoded_data = minicbor::decode::<MintMemo>(&memo.0).expect("failed to decode memo");
     assert_eq!(decoded_data, MintMemo::Kyt);
+}
+
+#[test]
+fn test_filter_logs() {
+    let ckbtc = CkBtcSetup::new();
+
+    // Trigger an even to add some logs.
+
+    let deposit_value = 100_000_000;
+    let utxo = Utxo {
+        height: 0,
+        outpoint: OutPoint {
+            txid: (1..=32).collect::<Vec<u8>>(),
+            vout: 1,
+        },
+        value: deposit_value,
+    };
+
+    let user = Principal::from(ckbtc.caller);
+
+    ckbtc.deposit_utxo(user, utxo);
+
+    let system_time = ckbtc.env.time();
+
+    let nanos = system_time
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .expect("Time went backwards")
+        .as_nanos();
+
+    let request = HttpRequest {
+        method: "".to_string(),
+        url: format!("/logs?time={}", nanos),
+        headers: vec![],
+        body: serde_bytes::ByteBuf::new(),
+    };
+    let response = Decode!(
+        &assert_reply(
+            ckbtc
+                .env
+                .execute_ingress(ckbtc.minter_id, "http_request", Encode!(&request).unwrap(),)
+                .expect("failed to get minter info")
+        ),
+        HttpResponse
+    )
+    .unwrap();
+    let logs: Log =
+        serde_json::from_slice(&response.body).expect("failed to parse ckbtc minter log");
+
+    let request = HttpRequest {
+        method: "".to_string(),
+        url: format!("/logs?time={}", nanos + 30 * 1_000_000_000),
+        headers: vec![],
+        body: serde_bytes::ByteBuf::new(),
+    };
+    let response = Decode!(
+        &assert_reply(
+            ckbtc
+                .env
+                .execute_ingress(ckbtc.minter_id, "http_request", Encode!(&request).unwrap(),)
+                .expect("failed to get minter info")
+        ),
+        HttpResponse
+    )
+    .unwrap();
+    let logs_filtered: Log =
+        serde_json::from_slice(&response.body).expect("failed to parse ckbtc minter log");
+
+    assert_ne!(logs.entries.len(), logs_filtered.entries.len());
 }

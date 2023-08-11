@@ -11,17 +11,19 @@ path = "src/main.rs"
 
 [dependencies]
 async-trait = "0.1.53"
-candid = "0.8.1"
-ciborium = "0.2"
+candid = { workspace = true }
+ciborium = { workspace = true }
 hex = "0.4.2"
 ic-base-types = { path = "../../../types/base_types" }
 ic-canister-log = { path = "../../../rust_canisters/canister_log" }
 ic-canisters-http-types = { path = "../../../rust_canisters/http_types" }
 ic-crypto-tree-hash = { path = "../../../crypto/tree_hash" }
 ic-ledger-hash-of = { path = "../../../../packages/ic-ledger-hash-of" }
-ic-cdk = { version = "0.6.0" }
-ic-cdk-macros = { version = "0.6.0" }
+ic-cdk = { workspace = true }
+ic-cdk-macros = { workspace = true }
 ic-icrc1 = { path = ".." }
+ic-icrc1-tokens-u64 = { path = "../tokens_u64" }
+ic-icrc1-tokens-u256 = { path = "../tokens_u256", optional = true }
 ic-icrc1-client = { path = "../client"}
 ic-ledger-canister-core = { path = "../../ledger_canister_core" }
 ic-ledger-core = { path = "../../ledger_core" }
@@ -38,3 +40,7 @@ ic-test-utilities-load-wasm = { path = "../../../test_utilities/load_wasm" }
 ic-state-machine-tests = { path = "../../../state_machine_tests" }
 leb128 = "0.2.4"
 proptest = "1.0"
+
+[features]
+default = []
+u256-tokens = ["dep:ic-icrc1-tokens-u256"]

@@ -18,6 +18,7 @@ mod src {
             developer_distribution::NeuronDistribution, DeveloperDistribution, SwapDistribution,
             TreasuryDistribution,
         },
+        swap_parameters::NeuronBasketConstructionParameters,
         GovernanceParameters, InitialTokenDistribution, LedgerParameters, SwapParameters,
     };
 } // end mod src
@@ -54,12 +55,12 @@ lazy_static! {
             }),
             swap_distribution: Some(src::SwapDistribution {
                 total: Some(pb::Tokens {
-                    e8s: Some(184_088_000),
+                    e8s: Some(1_840_880_000),
                 }),
             }),
         }),
         ledger_parameters: Some(src::LedgerParameters {
-            transaction_fee: Some(pb::Tokens { e8s: Some(111430) }),
+            transaction_fee: Some(pb::Tokens { e8s: Some(11143) }),
             token_name: Some("Most valuable SNS of all time.".to_string()),
             token_symbol: Some("Kanye".to_string()),
             token_logo: Some(pb::Image {
@@ -79,7 +80,7 @@ lazy_static! {
 
             // Neuron Parameters
             // -----------------
-            neuron_minimum_stake: Some(pb::Tokens { e8s: Some(618010) }),
+            neuron_minimum_stake: Some(pb::Tokens { e8s: Some(250_000) }),
 
             neuron_minimum_dissolve_delay_to_vote: Some(pb::Duration {
                 seconds: Some(482538),
@@ -120,15 +121,35 @@ lazy_static! {
                 iso_codes: vec!["CH".to_string()]
             }),
 
-            // Not used.
-            minimum_participants: None,
-            minimum_icp: None,
-            maximum_icp: None,
-            minimum_participant_icp: None,
-            maximum_participant_icp: None,
-            neuron_basket_construction_parameters: None,
-            start_time: None,
-            duration: None,
+            minimum_participants: Some(50),
+            minimum_icp: Some(pb::Tokens {
+                e8s: Some(12_300_000_000),
+            }),
+            maximum_icp: Some(pb::Tokens {
+                e8s: Some(25_000_000_000),
+            }),
+            minimum_participant_icp: Some(pb::Tokens {
+                e8s:  Some(100_000_000)
+            }),
+            maximum_participant_icp: Some(pb::Tokens {
+                e8s:  Some(10_000_000_000)
+            }),
+            neuron_basket_construction_parameters: Some(src::NeuronBasketConstructionParameters {
+                count: Some(2),
+                dissolve_delay_interval: Some(pb::Duration {
+                    seconds: Some(10_001),
+                })
+            }),
+            start_time: Some(pb::GlobalTimeOfDay {
+               seconds_after_utc_midnight: Some(0),
+            }),
+            duration: Some(pb::Duration {
+                seconds: Some(604_800),
+            }),
+
+            neurons_fund_investment_icp: Some(pb::Tokens {
+                e8s: Some(6_100_000_000),
+            }),
         })
     };
 }

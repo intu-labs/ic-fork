@@ -94,6 +94,7 @@ pub(super) struct QueryContext<'a> {
     query_context_time_start: Instant,
     query_context_time_limit: Duration,
     query_critical_error: &'a IntCounter,
+    subnet_memory_capacity: NumBytes,
 }
 
 impl<'a> QueryContext<'a> {
@@ -105,6 +106,7 @@ impl<'a> QueryContext<'a> {
         state: Arc<ReplicatedState>,
         data_certificate: Vec<u8>,
         subnet_available_memory: SubnetAvailableMemory,
+        subnet_memory_capacity: NumBytes,
         max_canister_memory_size: NumBytes,
         max_instructions_per_query: NumInstructions,
         max_query_call_graph_depth: usize,
@@ -141,6 +143,7 @@ impl<'a> QueryContext<'a> {
             query_context_time_start: Instant::now(),
             query_context_time_limit: max_query_call_walltime,
             query_critical_error,
+            subnet_memory_capacity,
         }
     }
 
@@ -174,6 +177,7 @@ impl<'a> QueryContext<'a> {
             old_canister.memory_usage(),
             old_canister.scheduler_state.compute_allocation,
             subnet_size,
+            old_canister.system_state.reserved_balance(),
         ) > old_canister.system_state.balance()
         {
             return Err(UserError::new(
@@ -468,6 +472,7 @@ impl<'a> QueryContext<'a> {
         let api_type = match response.response_payload {
             Payload::Data(payload) => ApiType::reply_callback(
                 time,
+                call_origin.get_principal(),
                 payload.to_vec(),
                 incoming_cycles,
                 call_context_id,
@@ -476,6 +481,7 @@ impl<'a> QueryContext<'a> {
             ),
             Payload::Reject(context) => ApiType::reject_callback(
                 time,
+                call_origin.get_principal(),
                 context,
                 incoming_cycles,
                 call_context_id,
@@ -572,7 +578,10 @@ impl<'a> QueryContext<'a> {
         };
         let (cleanup_output, output_execution_state, output_system_state) =
             self.hypervisor.execute(
-                ApiType::Cleanup { time },
+                ApiType::Cleanup {
+                    caller: call_origin.get_principal(),
+                    time,
+                },
                 time,
                 canister.system_state.clone(),
                 canister_current_memory_usage,
@@ -892,6 +901,9 @@ impl<'a> QueryContext<'a> {
             compute_allocation: canister.compute_allocation(),
             subnet_type: self.own_subnet_type,
             execution_mode: ExecutionMode::NonReplicated,
+            subnet_memory_capacity: self.subnet_memory_capacity,
+            // Effectively disable subnet memory resource reservation for queries.
+            subnet_memory_threshold: self.subnet_memory_capacity,
         }
     }
 

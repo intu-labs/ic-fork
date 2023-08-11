@@ -1,10 +1,32 @@
-//! Wrapper for BLS12-381 operations
+//! BLS12-381 wrapper types and common operations
+//!
+//! This crate provides a stable API for various operations relevant
+//! both to generic uses of BLS12-381 (point multiplication, pairings, ...)
+//! as well as Internet Computer specific functionality, especially functions
+//! necessary to implement the Non Interactive Distributed Key Generation
+//!
+//! It also offers optimized implementations of point multiplication and
+//! multiscalar multiplication which are substantially faster than the basic
+//! implementations from the bls12_381 crate, which this crate uses for
+//! its underlying arithmetic
+//!
+//! It also includes implementations of polynomial arithmetic and
+//! Lagrange interpolation.
 
 #![forbid(unsafe_code)]
 #![forbid(missing_docs)]
 #![warn(rust_2018_idioms)]
 #![warn(future_incompatible)]
 #![allow(clippy::needless_range_loop)]
+
+mod interpolation;
+mod poly;
+
+pub use interpolation::{InterpolationError, LagrangeCoefficients};
+pub use poly::Polynomial;
+
+/// The index of a node.
+pub type NodeIndex = u32;
 
 #[cfg(test)]
 mod tests;
@@ -46,6 +68,10 @@ pub enum PairingInvalidScalar {
 #[derive(Clone, Eq, PartialEq, Zeroize, ZeroizeOnDrop)]
 pub struct Scalar {
     value: ic_bls12_381::Scalar,
+}
+
+lazy_static::lazy_static! {
+    static ref SCALAR_ZERO: Scalar = Scalar::new(ic_bls12_381::Scalar::zero());
 }
 
 impl Ord for Scalar {
@@ -115,9 +141,15 @@ impl Scalar {
         Self::from_u64(v as u64)
     }
 
-    /// Create a scalar from a small integer value + 1
-    pub fn from_node_index(v: u32) -> Self {
-        Self::from_u64(v as u64 + 1)
+    /// Create a scalar used for threshold polynomial evaluation
+    ///
+    /// Normally this is used in threshold schemes, where a polynomial
+    /// `f` is evaluated as `f(x)` where `x` is an integer > 0 which
+    /// is unique to the node. In this scenario, `f(0)` reveals the
+    /// full secret and is never computed. Thus, we number the nodes
+    /// starting from index 1 instead of 0.
+    pub fn from_node_index(node_index: NodeIndex) -> Self {
+        Self::from_u64(node_index as u64 + 1)
     }
 
     /// Create a scalar from a small integer value
@@ -190,6 +222,11 @@ impl Scalar {
     /// Return the scalar 0
     pub fn zero() -> Self {
         Self::new(ic_bls12_381::Scalar::zero())
+    }
+
+    /// Return the scalar 0, as a static reference
+    pub fn zero_ref() -> &'static Self {
+        &SCALAR_ZERO
     }
 
     /// Return the scalar 1
@@ -1618,10 +1655,17 @@ macro_rules! declare_muln_vartime_dispatch_for {
             }
 
             fn muln_vartime_naive(points: &[Self], scalars: &[Scalar]) -> Self {
+                let (accum, points, scalars) = if points.len() % 2 == 0 {
+                    (Self::identity(), points, scalars)
+                } else {
+                    (&points[0] * &scalars[0], &points[1..], &scalars[1..])
+                };
                 points
-                    .iter()
-                    .zip(scalars.iter())
-                    .fold(Self::identity(), |accum, (p, s)| accum + p * s)
+                    .chunks(2)
+                    .zip(scalars.chunks(2))
+                    .fold(accum, |accum, (c_p, c_s)| {
+                        accum + Self::mul2(&c_p[0], &c_s[0], &c_p[1], &c_s[1])
+                    })
             }
         }
     };
@@ -1844,10 +1888,10 @@ macro_rules! declare_windowed_scalar_mul_ops_for {
 /// These values were derived from benchmarks on a single machine,
 /// but seem to match fairly closely with simulated estimates of
 /// the cost of Pippenger's
-const G1_PROJECTIVE_USE_W3_LARGER_THAN: usize = 12;
-const G1_PROJECTIVE_USE_W4_LARGER_THAN: usize = 64;
-const G2_PROJECTIVE_USE_W3_LARGER_THAN: usize = 8;
-const G2_PROJECTIVE_USE_W4_LARGER_THAN: usize = 64;
+const G1_PROJECTIVE_USE_W3_IF_EQ_OR_GT: usize = 13;
+const G1_PROJECTIVE_USE_W4_IF_EQ_OR_GT: usize = 64;
+const G2_PROJECTIVE_USE_W3_IF_EQ_OR_GT: usize = 15;
+const G2_PROJECTIVE_USE_W4_IF_EQ_OR_GT: usize = 64;
 
 define_affine_and_projective_types!(G1Affine, G1Projective, 48);
 declare_addsub_ops_for!(G1Projective);
@@ -1856,8 +1900,8 @@ declare_windowed_scalar_mul_ops_for!(G1Projective, 4);
 declare_mul2_impl_for!(G1Projective, G1Mul2Table, 2, 3);
 declare_muln_vartime_dispatch_for!(
     G1Projective,
-    G1_PROJECTIVE_USE_W3_LARGER_THAN,
-    G1_PROJECTIVE_USE_W4_LARGER_THAN
+    G1_PROJECTIVE_USE_W3_IF_EQ_OR_GT,
+    G1_PROJECTIVE_USE_W4_IF_EQ_OR_GT
 );
 declare_muln_vartime_impls_for!(G1Projective, 3, 4);
 declare_muln_vartime_affine_impl_for!(G1Projective, G1Affine);
@@ -1871,8 +1915,8 @@ declare_windowed_scalar_mul_ops_for!(G2Projective, 4);
 declare_mul2_impl_for!(G2Projective, G2Mul2Table, 2, 3);
 declare_muln_vartime_dispatch_for!(
     G2Projective,
-    G2_PROJECTIVE_USE_W3_LARGER_THAN,
-    G2_PROJECTIVE_USE_W4_LARGER_THAN
+    G2_PROJECTIVE_USE_W3_IF_EQ_OR_GT,
+    G2_PROJECTIVE_USE_W4_IF_EQ_OR_GT
 );
 declare_muln_vartime_impls_for!(G2Projective, 3, 4);
 declare_muln_vartime_affine_impl_for!(G2Projective, G2Affine);

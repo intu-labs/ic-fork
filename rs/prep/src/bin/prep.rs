@@ -27,9 +27,7 @@ use ic_prep_lib::{
 };
 use ic_registry_provisional_whitelist::ProvisionalWhitelist;
 use ic_registry_subnet_type::SubnetType;
-use ic_types::{
-    registry::connection_endpoint::ConnectionEndpoint, Height, PrincipalId, ReplicaVersion,
-};
+use ic_types::{Height, PrincipalId, ReplicaVersion};
 
 /// the filename of the update disk image, as published on the cdn
 const UPD_IMG_FILENAME: &str = "update-img.tar.gz";
@@ -106,17 +104,9 @@ struct CliArgs {
     #[clap(long, parse(try_from_str = parse_nodes_deprecated), group = "node_spec", multiple_values(true))]
     pub nodes: Vec<Node>,
 
-    /// JSON5 node definition
-    #[clap(long, group = "node_spec", multiple_values(true))]
-    pub node: Vec<Node>,
-
     /// Path to working directory for node states.
     #[clap(long, parse(from_os_str))]
     pub working_dir: PathBuf,
-
-    /// Flows per node.
-    #[clap(long, parse(try_from_str = parse_flows))]
-    pub p2p_flows: FlowConfig,
 
     /// Skip generating subnet records
     #[clap(long)]
@@ -191,6 +181,11 @@ struct CliArgs {
     /// Used only for local and testnet replicas.
     #[clap(long = "use-specified-ids-allocation-range")]
     use_specified_ids_allocation_range: bool,
+
+    /// Whitelisted firewall prefixes for initial registry state, separated by
+    /// commas.
+    #[clap(long = "whitelisted-prefixes")]
+    whitelisted_prefixes: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -300,37 +295,11 @@ struct ValidatedArgs {
     pub allow_empty_update_image: bool,
     pub guest_launch_measurement_sha256_hex: Option<String>,
     pub use_specified_ids_allocation_range: bool,
-}
-
-/// Structured definition of a flow provided by the `--p2p-flows` flag.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-struct FlowConfig {
-    /// The initial flow starting tag
-    start_tag: u32,
-
-    /// The number of flows to create
-    num_flows: u32,
-}
-
-/// Parse a `--p2p-flows` flag value in to a FlowConfig.
-fn parse_flows(src: &str) -> Result<FlowConfig> {
-    let parts = src.splitn(2, '-').collect::<Vec<&str>>();
-    let start_tag = parts[0]
-        .parse::<u32>()
-        .with_context(|| format!("did not parse {} as u32", parts[0]))?;
-
-    let num_flows = parts[1]
-        .parse::<u32>()
-        .with_context(|| format!("did not parse {} as u32", parts[0]))?;
-
-    Ok(FlowConfig {
-        start_tag,
-        num_flows,
-    })
+    pub whitelisted_prefixes: Option<String>,
 }
 
 /// Structured definition of a node provided by the `--nodes` flag.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct Node {
     /// Node index
     node_index: u64,
@@ -376,10 +345,11 @@ fn parse_nodes_deprecated(src: &str) -> Result<Node> {
 
     let http_addr: SocketAddr = parts[5]
         .parse()
-        .with_context(|| format!("did not parse {} as SocketAddr", parts[3]))?;
+        .with_context(|| format!("did not parse {} as SocketAddr", parts[5]))?;
 
-    // P2P is special, and needs a custom protocol
-    let p2p_addr: Url = format!("org.internetcomputer.p2p1://{}", parts[2]).parse()?;
+    let p2p_addr: SocketAddr = parts[2]
+        .parse()
+        .with_context(|| format!("did not parse {} as SocketAddr", parts[2]))?;
 
     // chip_id is optional
     let mut chip_id = vec![];
@@ -391,9 +361,9 @@ fn parse_nodes_deprecated(src: &str) -> Result<Node> {
         node_index,
         subnet_index,
         config: NodeConfiguration {
-            xnet_api: ConnectionEndpoint::from(xnet_addr),
-            public_api: ConnectionEndpoint::from(http_addr),
-            p2p_addr: ConnectionEndpoint::try_from(p2p_addr)?,
+            xnet_api: xnet_addr,
+            public_api: http_addr,
+            p2p_addr,
             node_operator_principal_id: None,
             secret_key_store: None,
             chip_id,
@@ -402,28 +372,15 @@ fn parse_nodes_deprecated(src: &str) -> Result<Node> {
 }
 
 /// Values passed to the `--node` flag.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 struct NodeFlag {
     idx: Option<u64>,
     subnet_idx: Option<u64>,
-    pub xnet_api: Option<ConnectionEndpoint>,
-    pub public_api: Option<ConnectionEndpoint>,
+    pub xnet_api: Option<SocketAddr>,
+    pub public_api: Option<SocketAddr>,
     /// The initial endpoint that P2P uses.
-    pub p2p_addr: Option<ConnectionEndpoint>,
+    pub p2p_addr: Option<SocketAddr>,
     pub chip_id: Option<Vec<u8>>,
-}
-
-#[derive(Error, Clone, Debug, PartialEq)]
-enum NodeFlagParseError {
-    #[error("field is missing: {source}")]
-    MissingField {
-        #[from]
-        source: MissingFieldError,
-    },
-
-    #[error("parsing flag '{flag}' failed: {source}")]
-    Json5ParseFailed { source: json5::Error, flag: String },
 }
 
 #[derive(Error, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -444,61 +401,6 @@ enum MissingFieldError {
     P2PAddr,
 }
 
-impl TryFrom<NodeFlag> for Node {
-    type Error = NodeFlagParseError;
-
-    fn try_from(value: NodeFlag) -> Result<Self, Self::Error> {
-        let node_index = value.idx.ok_or(MissingFieldError::NodeIndex)?;
-        let xnet_api = value.xnet_api.ok_or(MissingFieldError::Xnet)?;
-        let public_api = value.public_api.ok_or(MissingFieldError::PublicApi)?;
-        let p2p_addr = value.p2p_addr.ok_or(MissingFieldError::P2PAddr)?;
-        let chip_id = value.chip_id.unwrap_or_default();
-
-        Ok(Self {
-            node_index,
-            subnet_index: value.subnet_idx,
-            config: NodeConfiguration {
-                xnet_api,
-                public_api,
-                p2p_addr,
-                node_operator_principal_id: None,
-                secret_key_store: None,
-                chip_id,
-            },
-        })
-    }
-}
-
-impl FromStr for Node {
-    type Err = NodeFlagParseError;
-
-    /// Parses a node string in to a `Node`.
-    ///
-    /// A --node flag and node string looks like this:
-    ///
-    /// ```text
-    /// --node field:value,field:value,array_field:[value,value],...
-    /// ```
-    ///
-    /// The field names must match the field names in `NodeConfiguration`, with
-    /// the associated types.
-    ///
-    /// This is because the text is actually the JSON5 representation of the
-    /// value, without the opening/closing `{` and `}`. This means that the
-    /// field names do not need to be quoted
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let flag: NodeFlag = json5::from_str(&format!("{{ {} }}", s)).map_err(|source| {
-            Self::Err::Json5ParseFailed {
-                source,
-                flag: s.to_string(),
-            }
-        })?;
-
-        let node = Node::try_from(flag)?;
-        Ok(node)
-    }
-}
-
 impl Display for Node {
     /// Displays the node in a format that will be accepted by the `--node`
     /// flag.
@@ -512,13 +414,6 @@ impl Display for Node {
         write!(f, r#",xnet_api:"{}""#, self.config.xnet_api)?;
 
         Ok(())
-    }
-}
-
-impl<'a> TryFrom<&'a str> for Node {
-    type Error = <Node as FromStr>::Err;
-    fn try_from(s: &'a str) -> Result<Node, Self::Error> {
-        Node::from_str(s)
     }
 }
 
@@ -539,12 +434,6 @@ impl CliArgs {
         let mut subnets: BTreeMap<SubnetIndex, BTreeMap<NodeIndex, NodeConfiguration>> =
             BTreeMap::new();
 
-        let nodes: Vec<_> = if self.nodes.is_empty() {
-            self.node
-        } else {
-            self.nodes
-        };
-
         for (
             i,
             Node {
@@ -552,7 +441,7 @@ impl CliArgs {
                 subnet_index,
                 config,
             },
-        ) in nodes.iter().enumerate()
+        ) in self.nodes.iter().enumerate()
         {
             if !node_idx_set.insert(node_index) {
                 bail!("the {}'th entry repeats the node index {}", i, node_index);
@@ -690,6 +579,7 @@ impl CliArgs {
             allow_empty_update_image: self.allow_empty_update_image,
             guest_launch_measurement_sha256_hex: self.guest_launch_measurement_sha256_hex,
             use_specified_ids_allocation_range: self.use_specified_ids_allocation_range,
+            whitelisted_prefixes: self.whitelisted_prefixes,
         })
     }
 }
@@ -761,35 +651,6 @@ fn fetch_replica_version_sha256(version_id: ReplicaVersion) -> Result<String> {
 }
 
 #[cfg(test)]
-mod test_flag_p2p_flows_parser {
-    use super::*;
-    use anyhow::Result;
-    use pretty_assertions::assert_eq;
-
-    /// "1234-1" deconstructs in to a start_tag and num_flows
-    #[test]
-    fn valid_flow() -> Result<()> {
-        let got = parse_flows("1234-1")?;
-        let want = FlowConfig {
-            start_tag: 1234,
-            num_flows: 1,
-        };
-
-        assert_eq!(got, want);
-        Ok(())
-    }
-
-    /// An invalid value is recognised
-    #[test]
-    fn invalid_flow() -> Result<()> {
-        let got = parse_flows("x-x");
-
-        assert!(got.is_err());
-        Ok(())
-    }
-}
-
-#[cfg(test)]
 mod test_flag_nodes_parser_deprecated {
     use super::*;
     use pretty_assertions::assert_eq;
@@ -802,9 +663,9 @@ mod test_flag_nodes_parser_deprecated {
             node_index: 1,
             subnet_index: Some(2),
             config: NodeConfiguration {
-                xnet_api: "http://2.3.4.5:81".parse().unwrap(),
-                public_api: "http://3.4.5.6:82".parse().unwrap(),
-                p2p_addr: "org.internetcomputer.p2p1://1.2.3.4:80".parse().unwrap(),
+                xnet_api: SocketAddr::from_str("2.3.4.5:81").unwrap(),
+                public_api: SocketAddr::from_str("3.4.5.6:82").unwrap(),
+                p2p_addr: SocketAddr::from_str("1.2.3.4:80").unwrap(),
                 node_operator_principal_id: None,
                 secret_key_store: None,
                 chip_id: vec![],
@@ -823,9 +684,9 @@ mod test_flag_nodes_parser_deprecated {
             node_index: 1,
             subnet_index: Some(2),
             config: NodeConfiguration {
-                xnet_api: "http://2.3.4.5:81".parse().unwrap(),
-                public_api: "http://3.4.5.6:82".parse().unwrap(),
-                p2p_addr: "org.internetcomputer.p2p1://1.2.3.4:80".parse().unwrap(),
+                xnet_api: SocketAddr::from_str("2.3.4.5:81").unwrap(),
+                public_api: SocketAddr::from_str("3.4.5.6:82").unwrap(),
+                p2p_addr: SocketAddr::from_str("1.2.3.4:80").unwrap(),
                 node_operator_principal_id: None,
                 secret_key_store: None,
                 chip_id: vec![],
@@ -833,87 +694,5 @@ mod test_flag_nodes_parser_deprecated {
         };
 
         assert_eq!(got, want);
-    }
-}
-
-#[cfg(test)]
-mod test_flag_node_parser {
-    use super::*;
-    use assert_matches::assert_matches;
-    use pretty_assertions::assert_eq;
-
-    const GOOD_FLAG: &str = r#"idx:1,subnet_idx:2,xnet_api:"http://1.2.3.4:81",public_api:"http://3.4.5.6:82",p2p_addr:"org.internetcomputer.p2p1://1.2.3.4:80""#;
-
-    /// Verifies that a good flag parses correctly
-    #[test]
-    fn valid_flag() {
-        let got: Node = GOOD_FLAG.parse().unwrap();
-        let want = Node {
-            node_index: 1,
-            subnet_index: Some(2),
-            config: NodeConfiguration {
-                xnet_api: "http://1.2.3.4:81".parse().unwrap(),
-                public_api: "http://3.4.5.6:82".parse().unwrap(),
-                p2p_addr: "org.internetcomputer.p2p1://1.2.3.4:80".parse().unwrap(),
-                node_operator_principal_id: None,
-                secret_key_store: None,
-                chip_id: vec![],
-            },
-        };
-
-        assert_eq!(got, want);
-    }
-
-    /// Verifies that flags with missing fields return an Err
-    #[test]
-    fn missing_fields() {
-        // Each flag variant omits a field, starting with `idx`.
-        let flags = vec![
-            r#"subnet_idx:2,xnet_api:"http://1.2.3.4:81",public_api:"http://3.4.5.6:82",p2p_addr:"org.internetcomputer.p2p1://1.2.3.4:80""#,
-            // Omitting subnet index yields an unassigned node.
-            // r#"idx:1,xnet_api:"http://1.2.3.4:81",public_api:"http://3.4.5.6:82",p2p_addr:"org.internetcomputer.p2p1://1.2.3.4:80""#,
-            r#"idx:1,subnet_idx:2,public_api:"http://3.4.5.6:82",p2p_addr:"org.internetcomputer.p2p1://1.2.3.4:80""#,
-            r#"idx:1,subnet_idx:2,xnet_api:"http://1.2.3.4:81",p2p_addr:"org.internetcomputer.p2p1://1.2.3.4:80""#,
-            r#"idx:1,subnet_idx:2,xnet_api:"http://1.2.3.4:81",public_api:"http://3.4.5.6:82""#,
-        ];
-
-        for flag in flags {
-            assert_matches!(
-                flag.parse::<Node>(),
-                Err(NodeFlagParseError::MissingField { .. })
-            );
-        }
-    }
-
-    /// Verifies that unknown fields return an Err
-    #[test]
-    fn unknown_fields() {
-        let flag = format!("new_field:0,{}", GOOD_FLAG);
-        assert_matches!(
-            flag.parse::<Node>(),
-            Err(NodeFlagParseError::Json5ParseFailed { .. })
-        );
-    }
-
-    /// Verifies that the flag can roundrip through parsing
-    #[test]
-    fn roundtrip() {
-        let node: Node = GOOD_FLAG.parse().unwrap();
-        let node_flag = node.to_string();
-
-        let new_node: Node = node_flag.parse().unwrap();
-
-        assert_eq!(node, new_node);
-    }
-
-    #[test]
-    #[ignore] // side-effectful unit tests are ignored
-    fn can_fetch_sha256() {
-        let version_id =
-            ReplicaVersion::try_from("963c47c0179fb302cb02b1e4712f51b14ea738b6").unwrap();
-        assert_eq!(
-            fetch_replica_version_sha256(version_id).unwrap(),
-            "d081ffe20488380b4cf90069f3fc23e2fa4a904e4103d6f175c85ea87b2634b5"
-        );
     }
 }

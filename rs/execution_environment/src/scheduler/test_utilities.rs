@@ -57,6 +57,7 @@ use ic_types::{
 };
 use ic_wasm_types::CanisterModule;
 use maplit::btreemap;
+use std::time::Duration;
 
 use crate::{
     as_round_instructions, ExecutionEnvironment, Hypervisor, IngressHistoryWriterImpl, RoundLimits,
@@ -528,8 +529,12 @@ impl SchedulerTest {
     }
 
     pub fn charge_for_resource_allocations(&mut self) {
+        let subnet_size = self.subnet_size();
         self.scheduler
-            .charge_canisters_for_resource_allocation_and_usage(self.state.as_mut().unwrap(), 1)
+            .charge_canisters_for_resource_allocation_and_usage(
+                self.state.as_mut().unwrap(),
+                subnet_size,
+            )
     }
 
     pub fn induct_messages_on_same_subnet(&mut self) {
@@ -578,6 +583,12 @@ impl SchedulerTest {
             response_size_limit,
             self.subnet_size(),
         )
+    }
+
+    pub fn memory_cost(&self, bytes: NumBytes, duration: Duration) -> Cycles {
+        self.scheduler
+            .cycles_account_manager
+            .memory_cost(bytes, duration, self.subnet_size())
     }
 }
 
@@ -777,7 +788,7 @@ impl SchedulerTestBuilder {
             Arc::clone(&cycles_account_manager),
             Arc::<TestWasmExecutor>::clone(&wasm_executor),
             deterministic_time_slicing,
-            config.cost_to_compile_wasm_instruction,
+            config.embedders_config.cost_to_compile_wasm_instruction,
             SchedulerConfig::application_subnet().dirty_page_overhead,
         );
         let hypervisor = Arc::new(hypervisor);
@@ -996,7 +1007,6 @@ impl WasmExecutor for TestWasmExecutor {
         _canister_root: PathBuf,
         canister_id: CanisterId,
         _compilation_cache: Arc<CompilationCache>,
-        _logger: &ReplicaLogger,
     ) -> HypervisorResult<(ExecutionState, NumInstructions, Option<CompilationResult>)> {
         let mut guard = self.core.lock().unwrap();
         guard.create_execution_state(canister_module, canister_id)
@@ -1087,7 +1097,6 @@ impl TestWasmExecutorCore {
             message.calls,
             paused.call_context_id,
             paused.canister_current_memory_usage,
-            paused.execution_parameters.compute_allocation,
         );
 
         let canister_state_changes = CanisterStateChanges {
@@ -1159,7 +1168,6 @@ impl TestWasmExecutorCore {
         calls: Vec<TestCall>,
         call_context_id: Option<CallContextId>,
         canister_current_memory_usage: NumBytes,
-        compute_allocation: ComputeAllocation,
     ) -> SystemStateChanges {
         for call in calls.into_iter() {
             if let Err(error) = self.perform_call(
@@ -1167,7 +1175,6 @@ impl TestWasmExecutorCore {
                 call,
                 call_context_id.unwrap(),
                 canister_current_memory_usage,
-                compute_allocation,
             ) {
                 eprintln!("Skipping a call due to an error: {}", error);
             }
@@ -1182,7 +1189,6 @@ impl TestWasmExecutorCore {
         call: TestCall,
         call_context_id: CallContextId,
         canister_current_memory_usage: NumBytes,
-        compute_allocation: ComputeAllocation,
     ) -> Result<(), String> {
         let sender = system_state.canister_id();
         let receiver = call.other_side.canister.unwrap();
@@ -1221,7 +1227,6 @@ impl TestWasmExecutorCore {
         };
         if let Err(req) = system_state.push_output_request(
             canister_current_memory_usage,
-            compute_allocation,
             request,
             prepayment_for_response_execution,
             prepayment_for_response_transmission,

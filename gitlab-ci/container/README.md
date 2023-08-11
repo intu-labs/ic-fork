@@ -7,7 +7,7 @@ See [Dockerfile](Dockerfile) for info about required dependencies.
 ## Requirements
 
 - x86-64 based system (at least 8 CPUs, 16 GB MEM/SWAP, 100 GB available disk space)
-- Ubuntu 20.04 or newer
+- Ubuntu 22.04 or newer
 - [Podman](https://podman.io/getting-started/installation)
 
 **Note:** With *Ubuntu 20.10* and newer, you can simply do `sudo apt install -y podman`. With older versions see Ubuntu section of [Podman Installation Guide](https://podman.io/getting-started/installation). It's recommended to use Ubuntu 22.04.
@@ -59,4 +59,53 @@ Both binaries and canisters:
 
 ```bash
 $ ./gitlab-ci/container/build-ic.sh -b -c
+```
+
+## Using `container-run.sh`
+
+Using script `container-run.sh` is required and supported way for building and testing bazel targets!
+
+### What you need to know
+
+Script `container-run.sh` creates a rootful podman container with various arguments as seen below.
+
+```bash
+sudo podman run --pids-limit=-1 -it --rm --privileged --network=host --cgroupns=host -w /ic \
+  -u 1000:1001 -e HOSTUSER=john -e VERSION=8bb1564701c56424f77f16ef067599a1c1dc7c37 \
+  --hostname=devenv-container --add-host devenv-container:127.0.0.1 \
+  --entrypoint= --init --hostuser=john \
+  --mount type=tmpfs,destination=/var/sysimage \
+  --mount type=bind,source=/home/john/dev/ic-ctr-run-usr-cfg,target=/ic \
+  --mount type=bind,source=/home/john,target=/home/john \
+  --mount type=bind,source=/home/john /.cache,target=/home/ubuntu/.cache \
+  --mount type=bind,source=/home/john/.ssh,target=/home/ubuntu/.ssh \
+  --mount type=bind,source=/home/john/.aws,target=/home/ubuntu/.aws \
+  --mount type=bind,source=/var/lib/containers,target=/var/lib/containers \
+  --mount type=bind,source=/home/john/.gitconfig,target=/home/ubuntu/.gitconfig \
+  --mount type=bind,source=/home/john/.bash_history,target=/home/ubuntu/.bash_history \
+  --mount type=bind,source=/home/john/.local/share/fish,target=/home/ubuntu/.local/share/fish \
+  --mount type=bind,source=/home/john/.zsh_history,target=/home/ubuntu/.zsh_history \
+  -v /tmp/ssh-XXXXQAO7kF/agent.113731:/ssh-agent -e SSH_AUTH_SOCK=/ssh-agent -w /ic \
+  docker.io/dfinity/ic-build:221b79c4f4a966eae67a3f9ef7f20f4c5583d5bc38df17c94128804687a84c29 /usr/bin/fish
+```
+
+### How to use custom config
+
+User can create config `$HOME/.container-run.conf`, with `podman run` arguments, that provide way of adding custom bind-mounts etc. Config file requires array variable `PODMAN_RUN_USR_ARGS` with arguments accepted by `podman run` (see `podman run --help`). See example config from `.container-run.conf` below:
+
+```bash
+PODMAN_RUN_USR_ARGS=(
+    --mount type=bind,source=${HOME}/dev,target=/home/ubuntu/dev
+    --mount type=bind,source=${HOME}/.config/fish,target=/home/ubuntu/.config/fish
+    -e TESTVARIABLE="something-i-expect"
+)
+```
+
+### How to run parallel bazel tests
+
+By default `container-run.sh` bind-mounts `~/.cache` which is used for (output_base)[https://bazel.build/docs/user-manual#output-base]. If you need to run 2nd build/test in parallel but not interfere with the 1st one, follow the steps below.
+
+```bash
+mkdir ~/.cache2
+./gitlab-ci/container/container-run.sh -c ~/.cache2
 ```

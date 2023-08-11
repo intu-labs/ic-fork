@@ -13,7 +13,7 @@ filegroup(
 # See rs/nervous_system/feature_test.md
 BASE_DEPENDENCIES = [
     "//packages/icrc-ledger-types:icrc_ledger_types",
-    "//rs/crypto/sha",
+    "//rs/crypto/sha2",
     "//rs/nns/constants",
     "//rs/nervous_system/clients",
     "//rs/nervous_system/common",
@@ -205,6 +205,7 @@ generated_files_check(
         "//rs/nervous_system/proto:protos",
         "//rs/sns/init:protos",
         "//rs/types/base_types:protos",
+        "//rs/sns/swap:protos",
     ],
     manifest_dir = "rs/nns/sns-wasm",
     deps = [

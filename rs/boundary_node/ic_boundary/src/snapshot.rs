@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    fmt,
     net::{IpAddr, SocketAddr, ToSocketAddrs},
     str::FromStr,
     sync::Arc,
@@ -19,11 +20,13 @@ use ic_registry_client_helpers::{
     routing_table::RoutingTableRegistry,
     subnet::{SubnetListRegistry, SubnetRegistry},
 };
+use ic_types::replica_version::ReplicaVersion;
 use reqwest::dns::{Addrs, Resolve, Resolving};
 use rustls::{
     client::{ServerCertVerified, ServerCertVerifier},
     Certificate, CertificateError, Error as RustlsError, ServerName,
 };
+use tracing::warn;
 use x509_parser::{certificate::X509Certificate, prelude::FromDer, time::ASN1Time};
 
 use crate::Run;
@@ -31,9 +34,17 @@ use crate::Run;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Node {
     pub id: Principal,
+    pub subnet_id: Principal,
     pub addr: IpAddr,
     pub port: u16,
     pub tls_certificate: Vec<u8>,
+    pub replica_version: String,
+}
+
+impl fmt::Display for Node {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "[{:?}]:{:?}", self.addr, self.port)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,25 +59,32 @@ pub struct Subnet {
     pub subnet_type: SubnetType,
     pub ranges: Vec<CanisterRange>,
     pub nodes: Vec<Node>,
+    pub replica_version: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+impl fmt::Display for Subnet {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.id)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct RoutingTable {
     pub registry_version: u64,
     pub nns_subnet_id: Principal,
     pub subnets: Vec<Subnet>,
-    // Store node_id->node hash map for a faster lookup
+    // Hash map for a faster lookup by DNS resolver
     pub nodes: HashMap<String, Node>,
 }
 
-pub struct Runner<'a> {
-    published_routing_table: &'a ArcSwapOption<RoutingTable>,
+pub struct Runner {
+    published_routing_table: Arc<ArcSwapOption<RoutingTable>>,
     registry_client: Arc<dyn RegistryClient>,
 }
 
-impl<'a> Runner<'a> {
+impl Runner {
     pub fn new(
-        published_routing_table: &'a ArcSwapOption<RoutingTable>,
+        published_routing_table: Arc<ArcSwapOption<RoutingTable>>,
         registry_client: Arc<dyn RegistryClient>,
     ) -> Self {
         Self {
@@ -75,15 +93,19 @@ impl<'a> Runner<'a> {
         }
     }
 
+    // Constructs a routing table based on registry
     fn get_routing_table(&mut self) -> Result<RoutingTable, Error> {
         let version = self.registry_client.get_latest_version();
 
+        // Get NNS subnet ID
+        // TODO What do we need it for?
         let root_subnet_id = self
             .registry_client
             .get_root_subnet_id(version)
             .context("failed to get root subnet id")? // Result
             .context("root subnet id not available")?; // Option
 
+        // Get routing table with canister ranges
         let routing_table = self
             .registry_client
             .get_routing_table(version)
@@ -104,8 +126,10 @@ impl<'a> Runner<'a> {
                 .or_insert_with(|| vec![range]);
         }
 
+        // Hash to hold node_id->node mapping
         let mut nodes_map = HashMap::new();
 
+        // List of all subnet's IDs
         let subnet_ids = self
             .registry_client
             .get_subnet_ids(version)
@@ -118,14 +142,20 @@ impl<'a> Runner<'a> {
                 let subnet = self
                     .registry_client
                     .get_subnet_record(subnet_id, version)
-                    .context("failed to get subnet")?
-                    .context("subnet not available")?;
+                    .context("failed to get subnet")? // Result
+                    .context("subnet not available")?; // Option
 
                 let node_ids = self
                     .registry_client
                     .get_node_ids_on_subnet(subnet_id, version)
                     .context("failed to get node ids")? // Result
                     .context("node ids not available")?; // Option
+
+                let replica_version = self
+                    .registry_client
+                    .get_replica_version(subnet_id, version)
+                    .context("failed to get replica version")? // Result
+                    .context("replica version not available")?; // Option
 
                 let nodes = node_ids
                     .into_iter()
@@ -151,10 +181,12 @@ impl<'a> Runner<'a> {
 
                         let node_route = Node {
                             id: node_id.as_ref().0,
+                            subnet_id: subnet_id.as_ref().0,
                             addr: IpAddr::from_str(http_endpoint.ip_addr.as_str())
                                 .context("unable to parse IP address")?,
                             port: http_endpoint.port as u16, // Port is u16 anyway
                             tls_certificate: cert.certificate_der,
+                            replica_version: replica_version.to_string(),
                         };
 
                         nodes_map.insert(node_route.id.to_string(), node_route.clone());
@@ -173,6 +205,7 @@ impl<'a> Runner<'a> {
                     subnet_type: subnet.subnet_type(),
                     ranges,
                     nodes,
+                    replica_version: replica_version.to_string(),
                 };
 
                 let out: Result<Subnet, Error> = Ok(subnet_route);
@@ -191,7 +224,7 @@ impl<'a> Runner<'a> {
 }
 
 #[async_trait]
-impl<'a> Run for Runner<'a> {
+impl Run for Runner {
     async fn run(&mut self) -> Result<(), Error> {
         // Obtain routing table & publish it
         let rt = self.get_routing_table()?;
@@ -200,12 +233,24 @@ impl<'a> Run for Runner<'a> {
     }
 }
 
-pub struct HTTPClientHelper<'a> {
-    published_routing_table: &'a ArcSwapOption<RoutingTable>,
+pub struct TlsVerifier {
+    published_routing_table: Arc<ArcSwapOption<RoutingTable>>,
 }
 
-impl<'a> HTTPClientHelper<'a> {
-    pub fn new(published_routing_table: &'a ArcSwapOption<RoutingTable>) -> Self {
+impl TlsVerifier {
+    pub fn new(published_routing_table: Arc<ArcSwapOption<RoutingTable>>) -> Self {
+        Self {
+            published_routing_table,
+        }
+    }
+}
+
+pub struct DnsResolver {
+    published_routing_table: Arc<ArcSwapOption<RoutingTable>>,
+}
+
+impl DnsResolver {
+    pub fn new(published_routing_table: Arc<ArcSwapOption<RoutingTable>>) -> Self {
         Self {
             published_routing_table,
         }
@@ -216,7 +261,7 @@ impl<'a> HTTPClientHelper<'a> {
 // that was provided by node during TLS handshake matches its public key from the registry
 // This trait is used by Rustls in reqwest under the hood
 // We don't really check CommonName since the resolver makes sure we connect to the right IP
-impl<'a> ServerCertVerifier for HTTPClientHelper<'a> {
+impl ServerCertVerifier for TlsVerifier {
     fn verify_server_cert(
         &self,
         end_entity: &Certificate,
@@ -289,7 +334,7 @@ impl<'a> ServerCertVerifier for HTTPClientHelper<'a> {
 
 // Implement resolver based on the routing table
 // It's used by reqwest to resolve node IDs to an IP address
-impl<'a> Resolve for HTTPClientHelper<'a> {
+impl Resolve for DnsResolver {
     fn resolve(&self, name: Name) -> Resolving {
         // Load a routing table if we have one
         let rt = self.published_routing_table.load_full();
@@ -326,4 +371,4 @@ impl<'a> Resolve for HTTPClientHelper<'a> {
 }
 
 #[cfg(test)]
-mod test;
+pub mod test;

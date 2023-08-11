@@ -18,7 +18,6 @@ use ic_interfaces_registry::RegistryClient;
 use ic_logger::{error, info, new_replica_logger_from_config, warn, ReplicaLogger};
 use ic_metrics::MetricsRegistry;
 use ic_registry_replicator::RegistryReplicator;
-use ic_sys::utility_command::UtilityCommand;
 use ic_types::{ReplicaVersion, SubnetId};
 use slog_async::AsyncGuard;
 use std::net::SocketAddr;
@@ -100,7 +99,6 @@ impl Orchestrator {
             logger,
             "Orchestrator started: version={}, config={:?}", replica_version, config
         );
-        UtilityCommand::notify_host("Orchestrator started.", 1);
 
         let registry_replicator = Arc::new(RegistryReplicator::new_from_config(
             logger.clone(),
@@ -212,6 +210,7 @@ impl Orchestrator {
             Arc::clone(&registry),
             Arc::clone(&metrics),
             config.firewall.clone(),
+            cup_provider.clone(),
             logger.clone(),
         );
 
@@ -279,11 +278,18 @@ impl Orchestrator {
             // This timeout is a last resort trying to revive the upgrade monitoring
             // in case it gets stuck in an unexpected situation for longer than 15 minutes.
             let timeout = Duration::from_secs(60 * 15);
+            let metrics = upgrade.metrics.clone();
             upgrade
                 .upgrade_loop(exit_signal, CHECK_INTERVAL_SECS, timeout, |r| async {
                     match r {
-                        Ok(Ok(val)) => *maybe_subnet_id.write().await = val,
-                        e => warn!(log, "Check for upgrade failed: {:?}", e),
+                        Ok(Ok(val)) => {
+                            *maybe_subnet_id.write().await = val;
+                            metrics.failed_consecutive_upgrade_checks.reset();
+                        }
+                        e => {
+                            warn!(log, "Check for upgrade failed: {:?}", e);
+                            metrics.failed_consecutive_upgrade_checks.inc();
+                        }
                     };
                 })
                 .await;

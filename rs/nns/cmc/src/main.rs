@@ -31,7 +31,6 @@ use rand::{rngs::StdRng, seq::SliceRandom, SeedableRng};
 use serde::{Deserialize, Serialize};
 use std::{
     cell::RefCell,
-    cmp::{max, min},
     collections::{btree_map::Entry, BTreeMap, BTreeSet},
     convert::TryInto,
     thread::LocalKey,
@@ -592,18 +591,15 @@ fn remove_subnets_from_type(
 
 #[candid_method(query, rename = "get_subnet_types_to_subnets")]
 fn get_subnet_types_to_subnets() -> SubnetTypesToSubnetsResponse {
-    with_state(|state| {
-        let subnet_types_to_subnets: Vec<(String, Vec<SubnetId>)> = state
+    with_state(|state: &State| {
+        let data: Vec<(String, Vec<SubnetId>)> = state
             .subnet_types_to_subnets
             .as_ref()
             .expect("subnet types to subnets mapping is not `None`")
             .iter()
             .map(|(k, v)| (k.clone(), v.iter().copied().collect()))
             .collect();
-
-        SubnetTypesToSubnetsResponse {
-            data: subnet_types_to_subnets,
-        }
+        SubnetTypesToSubnetsResponse { data }
     })
 }
 
@@ -611,6 +607,29 @@ fn get_subnet_types_to_subnets() -> SubnetTypesToSubnetsResponse {
 #[export_name = "canister_query get_subnet_types_to_subnets"]
 fn get_subnet_types_to_subnets_() {
     over(candid_one, |_: ()| get_subnet_types_to_subnets())
+}
+
+#[candid_method(
+    query,
+    rename = "get_principals_authorized_to_create_canisters_to_subnets"
+)]
+fn get_principals_authorized_to_create_canisters_to_subnets() -> AuthorizedSubnetsResponse {
+    with_state(|state| {
+        let data = state
+            .authorized_subnets
+            .iter()
+            .map(|(k, v)| (*k, v.to_vec()))
+            .collect();
+        AuthorizedSubnetsResponse { data }
+    })
+}
+
+/// Returns the current mapping of authorized principals to subnets.
+#[export_name = "canister_query get_principals_authorized_to_create_canisters_to_subnets"]
+fn get_principals_authorized_to_create_canisters_to_subnets_() {
+    over(candid_one, |_: ()| {
+        get_principals_authorized_to_create_canisters_to_subnets()
+    })
 }
 
 /// Constructs a hash tree that can be used to certify requests for the
@@ -915,14 +934,10 @@ fn compute_capped_maturity_modulation(
             let difference = end_rate_value.saturating_sub(start_rate_value);
             let difference_permyriad = difference.saturating_mul(10_000);
             match difference_permyriad.checked_div(start_rate_value) {
-                Some(relative_change_permyriad) =>
-                // Bound the relative change based on the permissible range.
-                {
-                    min(
-                        max(relative_change_permyriad, MIN_MATURITY_MODULATION_PERMYRIAD),
-                        MAX_MATURITY_MODULATION_PERMYRIAD,
-                    )
-                }
+                Some(relative_change_permyriad) => relative_change_permyriad.clamp(
+                    MIN_MATURITY_MODULATION_PERMYRIAD,
+                    MAX_MATURITY_MODULATION_PERMYRIAD,
+                ),
                 None => 0,
             }
         } else {
@@ -956,7 +971,6 @@ fn remove_subnet_from_authorized_subnet_list(subnet_to_remove: SubnetId) {
         state
             .authorized_subnets
             .values_mut()
-            .into_iter()
             .for_each(|subnet_list| subnet_list.retain(|subnet| *subnet != subnet_to_remove))
     });
 }
@@ -1867,6 +1881,7 @@ mod tests {
     use super::*;
     use ic_types_test_utils::ids::{subnet_test_id, user_test_id};
     use rand::Rng;
+    use std::cmp::{max, min};
 
     pub(crate) fn init_test_state() {
         init(Some(CyclesCanisterInitPayload {

@@ -7,6 +7,9 @@ edition = "2021"
 name = "ic-boundary"
 path = "src/main.rs"
 
+[features]
+tls = []
+
 [dependencies]
 anyhow = "1.0.56"
 arc-swap = "1"
@@ -15,12 +18,14 @@ async-trait = "0.1.56"
 axum = "0.6.1"
 axum-server = { version = "0.5.1", features = ["tls-rustls"] }
 bytes = "1.4.0"
-candid = "0.8.4"
+candid = { workspace = true }
 clap = { version = "4", features = ["derive"] }
-ethnum = "1.3.2"
+dashmap = "5.3.4"
+ethnum = { workspace = true }
 futures = "0.3.21"
 futures-util = "0.3.28"
 hex = "0.4.3"
+http = "0.2.6"
 hyper = "0.14.18"
 hyper-rustls = "0.24.0"
 ic-config = { path = "../../config" }
@@ -36,11 +41,15 @@ ic-types = { path = "../../types/types" }
 instant-acme = "0.3.2"
 lazy_static = "1.4.0"
 mockall = "0.11.4"
+opentelemetry = "0.18.0"
+opentelemetry-prometheus = "0.11.0"
 prometheus = "0.13"
+rand = "0.8.4"
 rcgen = "0.10.0"
 # same feature as in bazel
 reqwest = { version = "0.11.18", features = [ "blocking", "json", "multipart", "native-tls", "rustls-tls", "stream"] }
-rustls = { version = "0.21.2", features = ["dangerous_configuration"] }
+rustls = { version = "^0.21.0", features = ["dangerous_configuration"] }
+simple_moving_average = "0.1.2"
 serde = "1.0.163"
 serde_cbor = "0.11.2"
 serde_json = "1.0.96"
@@ -49,6 +58,8 @@ tempfile = "3.6.0"
 thiserror = "1.0.40"
 tokio = { version = "1.19.2", features = ["full"] }
 tokio-rustls = { version = "0.24.0", features = ["dangerous_configuration"] }
+tower = { version = "0.4.11", features = ["buffer", "limit", "load-shed", "steer", "timeout", "util"] }
+tower-http = { version = "0.4.3", features = ["trace", "request-id", "util"] }
 tracing = "0.1.35"
 tracing-subscriber = { version = "0.3.11", features = ["json"] }
 url = "2.1.1"

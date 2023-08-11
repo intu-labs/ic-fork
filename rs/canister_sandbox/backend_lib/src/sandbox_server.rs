@@ -185,6 +185,8 @@ mod tests {
             compute_allocation: ComputeAllocation::default(),
             subnet_type: SubnetType::Application,
             execution_mode: ExecutionMode::Replicated,
+            subnet_memory_capacity: NumBytes::new(1_000_000_000),
+            subnet_memory_threshold: NumBytes::new(1_000_000_000),
         }
     }
 
@@ -197,7 +199,9 @@ mod tests {
             CanisterStatusView::Running,
             NumSeconds::from(3600),
             MemoryAllocation::BestEffort,
+            ComputeAllocation::default(),
             Cycles::new(1_000_000),
+            Cycles::zero(),
             BTreeMap::new(),
             CyclesAccountManager::new(
                 NumInstructions::from(1_000_000_000),

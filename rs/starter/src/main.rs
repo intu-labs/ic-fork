@@ -25,6 +25,8 @@ use ic_config::{
     adapters::AdaptersConfig,
     artifact_pool::ArtifactPoolTomlConfig,
     crypto::CryptoConfig,
+    embedders::Config as EmbeddersConfig,
+    embedders::FeatureFlags,
     execution_environment::Config as HypervisorConfig,
     flag_status::FlagStatus,
     http_handler::Config as HttpHandlerConfig,
@@ -45,7 +47,7 @@ use ic_prep_lib::{
 use ic_protobuf::registry::subnet::v1::{EcdsaConfig, SevFeatureStatus, SubnetFeatures};
 use ic_registry_provisional_whitelist::ProvisionalWhitelist;
 use ic_registry_subnet_type::SubnetType;
-use ic_types::{registry::connection_endpoint::ConnectionEndpoint, Height};
+use ic_types::Height;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -87,11 +89,9 @@ fn main() -> Result<()> {
         subnet_nodes.insert(
             NODE_INDEX,
             NodeConfiguration {
-                xnet_api: "http://0.0.0.0:0".parse().expect("can't fail"),
-                public_api: ConnectionEndpoint::from(config.http_listen_addr),
-                p2p_addr: "org.internetcomputer.p2p1://0.0.0.0:0"
-                    .parse()
-                    .expect("can't fail"),
+                xnet_api: SocketAddr::from_str("0.0.0.0:0").unwrap(),
+                public_api: config.http_listen_addr,
+                p2p_addr: SocketAddr::from_str("0.0.0.0:0").unwrap(),
                 node_operator_principal_id: None,
                 secret_key_store: None,
                 chip_id: vec![],
@@ -303,7 +303,6 @@ struct CliArgs {
         possible_values = &[
             "canister_sandboxing",
             "http_requests",
-            "onchain_observability",
             "bitcoin_testnet",
             "bitcoin_testnet_syncing",
             "bitcoin_testnet_paused",
@@ -568,15 +567,10 @@ fn to_subnet_features(features: &[String]) -> SubnetFeatures {
     } else {
         None
     };
-    let onchain_observability = features
-        .iter()
-        .any(|s| s.as_str() == "onchain_observability")
-        .then_some(true);
     SubnetFeatures {
         canister_sandboxing,
         http_requests,
         sev_status,
-        onchain_observability,
     }
 }
 
@@ -656,7 +650,13 @@ impl ValidatedConfig {
             } else {
                 FlagStatus::Disabled
             },
-            rate_limiting_of_debug_prints: FlagStatus::Disabled,
+            embedders_config: EmbeddersConfig {
+                feature_flags: FeatureFlags {
+                    rate_limiting_of_debug_prints: FlagStatus::Disabled,
+                    ..FeatureFlags::default()
+                },
+                ..EmbeddersConfig::default()
+            },
             rate_limiting_of_heap_delta: FlagStatus::Disabled,
             rate_limiting_of_instructions: FlagStatus::Disabled,
             composite_queries: FlagStatus::Enabled,
