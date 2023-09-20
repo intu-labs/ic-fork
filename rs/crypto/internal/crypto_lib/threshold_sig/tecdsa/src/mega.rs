@@ -78,7 +78,7 @@ impl MEGaPublicKey {
     }
 }
 
-#[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, Debug)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct MEGaPrivateKey {
     secret: EccScalar,
 }
@@ -111,7 +111,6 @@ impl MEGaPrivateKey {
         &self.secret
     }
 }
-/* 
 impl Debug for MEGaPrivateKey {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.secret {
@@ -120,7 +119,6 @@ impl Debug for MEGaPrivateKey {
         }
     }
 }
-*/
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MEGaCiphertextSingle {
     pub ephemeral_key: EccPoint,  // "v" in the paper

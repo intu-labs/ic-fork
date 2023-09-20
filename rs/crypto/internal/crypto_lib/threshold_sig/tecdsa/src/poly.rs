@@ -1,5 +1,5 @@
 use crate::*;
-use core::fmt::Debug;
+use core::fmt::{self,Debug};
 use ic_types::crypto::canister_threshold_sig::idkg::IDkgOpening;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -10,7 +10,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 ///
 /// The coefficients are stored in little-endian ordering, ie a_0 is
 /// self.coefficients\[0\]
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Polynomial {
     curve: EccCurveType,
     coefficients: Vec<EccScalar>,
@@ -281,7 +281,7 @@ impl Polynomial {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum CommitmentOpening {
     Simple(EccScalar),
     Pedersen(EccScalar, EccScalar),
@@ -316,7 +316,6 @@ impl CommitmentOpening {
             .map_err(|e| ThresholdEcdsaError::SerializationError(format!("{}", e)))
     }
 }
-/*
 impl Debug for CommitmentOpening {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self {
@@ -341,7 +340,6 @@ impl Debug for CommitmentOpening {
         }
     }
 }
-*/
 
 impl TryFrom<&CommitmentOpeningBytes> for CommitmentOpening {
     type Error = ThresholdEcdsaError;
