@@ -156,30 +156,30 @@ impl Polynomial {
     }
 
     /// Compute product of a polynomial and a polynomial
-    //pub fn mul(&self, rhs: &Self) -> ThresholdEcdsaResult<Self> {
-    //    let curve_type = self.curve_type();
+    pub fn mul(&self, rhs: &Self) -> ThresholdEcdsaResult<Self> {
+        let curve_type = self.curve_type();
 
-    //    if rhs.curve_type() != curve_type {
-    //        return Err(ThresholdEcdsaError::CurveMismatch);
-    //    }
+        if rhs.curve_type() != curve_type {
+            return Err(ThresholdEcdsaError::CurveMismatch);
+        }
 
-    //    let lhs_coeffs = self.coefficients.len();
-    //    let rhs_coeffs = rhs.coefficients.len();
-    //    // Slightly over-estimates the size when one of the poly is empty
-    //    let max_coef = std::cmp::max(self.coefficients.len(), rhs.coefficients.len());
-    //    let n_coeffs = std::cmp::max(max_coef, 2);
+        let lhs_coeffs = self.coefficients.len();
+        let rhs_coeffs = rhs.coefficients.len();
+        // Slightly over-estimates the size when one of the poly is empty
+        let max_coef = std::cmp::max(self.coefficients.len(), rhs.coefficients.len());
+        let n_coeffs = std::cmp::max(max_coef, 2);
 
-    //    let zero = EccScalar::zero(curve_type);
-    //    let mut coeffs = vec![zero; n_coeffs];
+        let zero = EccScalar::zero(curve_type);
+        let mut coeffs = vec![zero; n_coeffs];
 
-    //    for (i, ca) in self.coefficients.iter().enumerate() {
-    //        for (j, cb) in rhs.coefficients.iter().enumerate() {
-    //            let tmp = ca.mul(cb)?;
-    //            coeffs[i] = coeffs[i].add(&tmp)?;
-    //        }
-    //    }
-    //    Self::new(curve_type, coeffs)
-    //}
+        for (i, ca) in self.coefficients.iter().enumerate() {
+            for (j, cb) in rhs.coefficients.iter().enumerate() {
+                let tmp = ca.mul(cb)?;
+                coeffs[i] = coeffs[i].add(&tmp)?;
+            }
+        }
+        Self::new(curve_type, coeffs)
+    }
 
     /// Compute product of a polynomial and a scalar
     fn mul_scalar(&self, scalar: &EccScalar) -> ThresholdEcdsaResult<Self> {
