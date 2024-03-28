@@ -166,7 +166,8 @@ impl Polynomial {
         let lhs_coeffs = self.coefficients.len();
         let rhs_coeffs = rhs.coefficients.len();
         // Slightly over-estimates the size when one of the poly is empty
-        let n_coeffs = std::cmp::max(lhs_coeffs + rhs_coeffs, 1) - 1;
+        let max_coef = std::cmp::max(self.coefficients.len(), rhs.coefficients.len());
+        let n_coeffs = std::cmp::max(max_coef, 2);
 
         let zero = EccScalar::zero(curve_type);
         let mut coeffs = vec![zero; n_coeffs];
@@ -174,7 +175,7 @@ impl Polynomial {
         for (i, ca) in self.coefficients.iter().enumerate() {
             for (j, cb) in rhs.coefficients.iter().enumerate() {
                 let tmp = ca.mul(cb)?;
-                coeffs[i + j] = coeffs[i + j].add(&tmp)?;
+                coeffs[i] = coeffs[i].add(&tmp)?;
             }
         }
         Self::new(curve_type, coeffs)
