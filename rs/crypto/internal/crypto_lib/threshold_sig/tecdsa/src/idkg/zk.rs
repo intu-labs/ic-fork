@@ -118,7 +118,7 @@ impl ProofOfEqualOpenings {
         })
     }
 
-    pub fn verify_openings(
+    pub fn verify_opening(
         &self,
         alg: IdkgProtocolAlgorithm,
         pedersen: &EccPoint,
