@@ -226,6 +226,13 @@ pub enum CanisterThresholdError {
     UnexpectedCommitmentType,
 }
 
+pub enum ThresholdEcdsaError {
+    UnexpectedCommitmentType,
+    InvalidCommitment,
+    InsufficientDealings,
+    InsufficientOpenings
+}
+
 pub type CanisterThresholdResult<T> = std::result::Result<T, CanisterThresholdError>;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
