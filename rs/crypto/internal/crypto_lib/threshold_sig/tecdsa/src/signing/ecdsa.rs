@@ -233,8 +233,8 @@ impl ThresholdEcdsaSigShareInternal {
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ThresholdEcdsaCombinedSigInternal {
-    r: EccScalar,
-    s: EccScalar,
+    pub r: EccScalar,
+    pub s: EccScalar,
 }
 
 impl ThresholdEcdsaCombinedSigInternal {

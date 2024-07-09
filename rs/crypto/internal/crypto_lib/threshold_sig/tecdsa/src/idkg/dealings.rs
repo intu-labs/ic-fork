@@ -5,7 +5,7 @@ use ic_types::NumberOfNodes;
 use serde::{Deserialize, Serialize};
 use std::convert::TryFrom;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum SecretShares {
     RandomUnmasked,
     Random,
@@ -13,7 +13,7 @@ pub enum SecretShares {
     ReshareOfMasked(EccScalar, EccScalar),
     UnmaskedTimesMasked(EccScalar, (EccScalar, EccScalar)),
 }
-
+/*
 impl Debug for SecretShares {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let name = match self {
@@ -50,7 +50,7 @@ impl Debug for SecretShares {
         write!(f, "SecretShares::{}{}{}", name, curve, redacted)
     }
 }
-
+*/
 impl TryFrom<(&CommitmentOpeningBytes, Option<&CommitmentOpeningBytes>)> for SecretShares {
     type Error = CanisterThresholdSerializationError;
 
