@@ -1,5 +1,6 @@
 use crate::DerivationPath;
 use crate::*;
+use ic_types::crypto::canister_threshold_sig::MasterPublicKey;
 
 // This is the conversion function used by ECDSA which returns the
 // x-coordinate of a point reduced modulo the modulus of the scalar
@@ -447,4 +448,26 @@ impl ThresholdEcdsaCombinedSigInternal {
         // accept:
         Ok(())
     }
+}
+
+pub fn derive_public_key(
+    master_public_key: &MasterPublicKey,
+    derivation_path: &DerivationPath,
+) -> CanisterThresholdResult<PublicKey> {
+    let raw_master_pk = match master_public_key.algorithm_id {
+        AlgorithmId::EcdsaSecp256k1 => {
+            EccPoint::deserialize(EccCurveType::K256, &master_public_key.public_key)?
+        }
+        _ => return Err(CanisterThresholdError::CurveMismatch),
+    };
+    // Compute tweak
+    let (key_tweak, chain_key) = derivation_path.derive_tweak(&raw_master_pk)?;
+    let tweak_g = EccPoint::mul_by_g(&key_tweak);
+    let public_key = tweak_g.add_points(&raw_master_pk)?;
+
+    Ok(PublicKey {
+        algorithm_id: master_public_key.algorithm_id,
+        public_key: public_key.serialize(),
+        chain_key,
+    })
 }
