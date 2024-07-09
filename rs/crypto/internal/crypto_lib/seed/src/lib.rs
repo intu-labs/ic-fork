@@ -77,4 +77,11 @@ impl Seed {
     pub fn into_rng(self) -> rand_chacha::ChaCha20Rng {
         rand_chacha::ChaCha20Rng::from_seed(self.value)
     }
+
+    /// Convert a Seed into a byte slice
+    ///
+    /// The Seed is consumed by this operation (Don't know if it's add security problems)
+    pub fn to_bytes(&self) -> &[u8] {
+        &self.value
+    }
 }
