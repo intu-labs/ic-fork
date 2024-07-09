@@ -392,7 +392,7 @@ impl IDkgDealingInternal {
                     signature_curve,
                 )?;
 
-                proof.verify(
+                proof.verify_opening(
                     alg,
                     &previous_commitment.evaluate_at(dealer_index)?,
                     &self.commitment.constant_term(),
@@ -436,7 +436,7 @@ impl IDkgDealingInternal {
                 lhs.verify_is(PolynomialCommitmentType::Simple, signature_curve)?;
                 rhs.verify_is(PolynomialCommitmentType::Pedersen, signature_curve)?;
 
-                proof.verify(
+                proof.verify_product(
                     alg,
                     &lhs.evaluate_at(dealer_index)?,
                     &rhs.evaluate_at(dealer_index)?,

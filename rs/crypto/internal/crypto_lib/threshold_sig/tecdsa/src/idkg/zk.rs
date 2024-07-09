@@ -118,7 +118,7 @@ impl ProofOfEqualOpenings {
         })
     }
 
-    pub fn verify(
+    pub fn verify_openings(
         &self,
         alg: IdkgProtocolAlgorithm,
         pedersen: &EccPoint,
@@ -291,7 +291,7 @@ impl ProofOfProduct {
         })
     }
 
-    pub fn verify(
+    pub fn verify_product(
         &self,
         alg: IdkgProtocolAlgorithm,
         lhs_com: &EccPoint,
