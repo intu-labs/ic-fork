@@ -414,6 +414,10 @@ impl Point {
         self.p.compress().0.to_vec()
     }
 
+    pub fn serialize_uncompressed(&self) -> Vec<u8> {
+        self.p.compress().0.to_vec()
+    }
+
     /// Check if the point is the point at infinity
     pub fn is_infinity(&self) -> bool {
         bool::from(Group::is_identity(&self.p))

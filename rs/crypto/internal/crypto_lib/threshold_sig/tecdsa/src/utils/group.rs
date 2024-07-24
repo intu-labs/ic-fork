@@ -1066,6 +1066,7 @@ impl EccPoint {
         match &self.point {
             EccPointInternal::K256(pt) => pt.serialize_uncompressed(),
             EccPointInternal::P256(pt) => pt.serialize_uncompressed(),
+            EccPointInternal::Ed25519(pt) => pt.serialize_uncompressed(),
         }
     }
 
