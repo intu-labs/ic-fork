@@ -222,6 +222,360 @@ impl ThresholdEcdsaSigShareInternal {
         Ok(())
     }
 
+    #[allow(clippy::many_single_char_names, clippy::too_many_arguments)]
+    pub fn verify_without_lambda(
+        &self,
+        derivation_path: &DerivationPath,
+        hashed_message: &[u8],
+        randomness: Randomness,
+        signer_index: NodeIndex,
+        key_transcript: &IDkgTranscriptInternal,
+        presig_transcript: &IDkgTranscriptInternal,
+        curve_type: EccCurveType,
+    ) -> ThresholdEcdsaResult<()> {
+        let kappa = presig_transcript.clone();
+        let key = key_transcript.clone();
+        
+        // Compute rho and tweak
+        let (rho, key_tweak, randomizer, presig) = derive_rho(
+            curve_type,
+            hashed_message,
+            &randomness,
+            derivation_path,
+            key_transcript,
+            presig_transcript,
+        )?;
+        // Compute theta
+        let e = convert_hash_to_integer(hashed_message, curve_type)?;
+        let theta = e.add(&rho.mul(&key_tweak)?)?;
+
+        println!("\n Verify Print infos ");
+        println!("VERIFY rho {:?}", rho );
+        println!("VERIFY presig {:?}", presig );
+        println!("VERIFY key_tweak {:?}", key_tweak );
+        println!("VERIFY randomizer {:?}", randomizer );
+        println!("VERIFY convert_hash_to_integer {:?}", e );
+        println!("VERIFY theta {:?}", theta );
+
+
+        // Evaluate commitments at the receiver index
+        let kappa_j = kappa.evaluate_at(signer_index)?;
+        let key_j = key.evaluate_at(signer_index)?;
+
+        /// Presume that the following resharing was performed for the constant secret 1
+        /// Polynomial = 1
+        /// Commitment = C = (g^1, g^0, ..., g^0)
+        /// CommitmentOpening for P_j = C^(j) = g^1
+        let id_j = EccPoint::generator_g(curve_type);
+       
+        let sigma_num = id_j
+            .scalar_mul(&theta)?
+            .add_points(&key_j.scalar_mul(&rho)?)?;
+
+        let sigma_den = id_j
+            .scalar_mul(&randomizer)?
+            .add_points(&kappa_j)?;
+
+        /*let sigma_num = key_j.scalar_mul(&rho)?
+            .scalar_mul(&theta)?;
+
+        let sigma_den = kappa_j
+            .scalar_mul(&randomizer)?;*/
+
+
+        /*let nu = match key {
+            CommitmentOpening::Pedersen(value, mask) => {
+                let nu_value = theta.add(&rho.mul(value)?)?;
+                let nu_mask = theta.add(&rho.mul(mask)?)?;
+                CommitmentOpening::Pedersen(nu_value, nu_mask)
+            }
+            _ => return Err(ThresholdEcdsaError::UnexpectedCommitmentType),
+        };
+
+        // Compute shares of sigma's denominator, i.e. openings of
+        // [mu] = randomizer*[lambda] + [kappa_times_lambda]
+        let mu = match kappa {
+            CommitmentOpening::Pedersen(value, mask) => {
+                let mu_value = randomizer.add(value)?;
+                let mu_mask = randomizer.add(mask)?;
+                CommitmentOpening::Pedersen(mu_value, mu_mask)
+            }
+            _ => return Err(ThresholdEcdsaError::UnexpectedCommitmentType),
+        }; */
+
+
+
+        match &self.sigma_numerator {
+            CommitmentOpening::Simple(v) => {
+                if sigma_num != EccPoint::mul_by_g(v)? {
+                    println!("\n ERROR HERE 1 ");
+                    println!("this is Sigma    {:?}", sigma_num);
+                    println!("this is mul_by_g {:?}", EccPoint::mul_by_g(v)?);
+
+                    return Err(ThresholdEcdsaError::InvalidCommitment);
+                }
+            }
+            _ => return Err(ThresholdEcdsaError::UnexpectedCommitmentType),
+        }
+
+        match &self.sigma_denominator {
+            CommitmentOpening::Simple(v) => {
+                if sigma_den != EccPoint::mul_by_g(v)? {
+                    println!("ERROR HERE 2 ");
+
+                    return Err(ThresholdEcdsaError::InvalidCommitment);
+                }
+            }
+            _ => return Err(ThresholdEcdsaError::UnexpectedCommitmentType),
+        }
+
+        Ok(())
+    }
+    #[allow(clippy::many_single_char_names, clippy::too_many_arguments)]
+    pub fn verify_without_lambda_reshare_masked(
+        &self,
+        derivation_path: &DerivationPath,
+        hashed_message: &[u8],
+        randomness: Randomness,
+        signer_index: NodeIndex,
+        key_transcript: &IDkgTranscriptInternal,
+        presig_transcript: &IDkgTranscriptInternal,
+        kappa: &IDkgTranscriptInternal,
+        key: &IDkgTranscriptInternal,
+        curve_type: EccCurveType,
+    ) -> ThresholdEcdsaResult<()> {
+        // Compute rho and tweak
+        let (rho, key_tweak, randomizer, _presig) = derive_rho(
+            curve_type,
+            hashed_message,
+            &randomness,
+            derivation_path,
+            key_transcript,
+            presig_transcript,
+        )?;
+        let e = convert_hash_to_integer(hashed_message, curve_type)?;
+        let theta = e.add(&rho.mul(&key_tweak)?)?;
+        let kappa_j = kappa.evaluate_at(signer_index)?;
+        let key_j = key.evaluate_at(signer_index)?;
+        let id_j = EccPoint::identity(curve_type).scalar_mul(&EccScalar::from_u64(curve_type, signer_index.into()))?;
+        let sigma_num = id_j
+            .scalar_mul(&theta)?
+            .add_points(&key_j.scalar_mul(&rho)?)?;
+        let sigma_den = id_j
+            .scalar_mul(&randomizer)?
+            .add_points(&kappa_j)?;
+        match &self.sigma_numerator {
+            CommitmentOpening::Pedersen(v, m) => {
+                
+                //if sigma_num != EccPoint::Simple(v)? {   ///not working because of this 
+
+                if sigma_num != EccPoint::pedersen(v, m)? {   ///not working because of this 
+
+                    return Err(ThresholdEcdsaError::InvalidCommitment);
+                }
+            }
+            _ => return Err(ThresholdEcdsaError::UnexpectedCommitmentType),
+        }
+        match &self.sigma_denominator {
+            CommitmentOpening::Pedersen(v, m) => {
+                if sigma_den != EccPoint::pedersen(v,m)? {
+                    return Err(ThresholdEcdsaError::InvalidCommitment);
+                }
+            }
+            _ => return Err(ThresholdEcdsaError::UnexpectedCommitmentType),
+        }
+
+        Ok(())
+    }
+    
+}
+
+    pub(crate) fn new_without_lambda(
+        derivation_path: &DerivationPath,
+        hashed_message: &[u8],
+        randomness: Randomness,
+        key_transcript: &IDkgTranscriptInternal,
+        presig_transcript: &IDkgTranscriptInternal,
+        key: &CommitmentOpening,
+        kappa: &CommitmentOpening,
+        curve_type: EccCurveType,
+    ) -> CanisterThresholdResult<Self> {
+        println!("this is shares 1 {:?}", key);
+
+        let (rho, key_tweak, randomizer, presig) = derive_rho(
+            curve_type,
+            hashed_message,
+            &randomness,
+            derivation_path,
+            key_transcript,
+            presig_transcript,
+        )?;
+
+        // Compute the message representative from the hash, which may require
+        // a reduction if int(hashed_message) >= group_order
+        let e = convert_hash_to_integer(hashed_message, curve_type)?;
+        let theta = e.add(&rho.mul(&key_tweak)?)?;
+
+        println!("\n Print infos ");
+        println!(" rho {:?}", rho);
+        println!(" presig {:?}", presig);
+        println!(" key_tweak {:?}", key_tweak);
+        println!(" randomizer {:?}", randomizer);
+        println!("convert_hash_to_integer {:?}", e);
+        println!(" theta {:?} \n", theta);
+
+        // Compute shares of sigma's numerator, i.e. openings of
+        // [nu] = theta*[lambda] + rho*[key_times_lambda]
+        let nu = match key {
+            CommitmentOpening::Simple(value) => {
+                let nu_value = theta.add(&rho.mul(value)?)?;
+                CommitmentOpening::Simple(nu_value)
+            }
+            _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
+        };
+
+        // Compute shares of sigma's denominator, i.e. openings of
+        // [mu] = randomizer*[lambda] + [kappa_times_lambda]
+        let mu = match kappa {
+            CommitmentOpening::Simple(value) => {
+                let mu_value = randomizer.add(value)?;
+                CommitmentOpening::Simple(mu_value)
+            }
+            _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
+        };
+
+        Ok(Self {
+            sigma_numerator: nu,
+            sigma_denominator: mu,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_without_lambda_reshare_masked(
+        derivation_path: &DerivationPath,
+        hashed_message: &[u8],
+        randomness: Randomness,
+        key_transcript: &IDkgTranscriptInternal,
+        presig_transcript: &IDkgTranscriptInternal,
+        key: &CommitmentOpening,
+        kappa: &CommitmentOpening,
+        curve_type: EccCurveType,
+    ) -> CanisterThresholdResult<Self> {
+        println!("this is shares 1 {:?}", key);
+
+        let (rho, key_tweak, randomizer, _presig) = derive_rho(
+            curve_type,
+            hashed_message,
+            &randomness,
+            derivation_path,
+            key_transcript,
+            presig_transcript,
+        )?;
+
+        println!(" rho {:?}", rho);
+        println!(" key_tweak {:?}", key_tweak);
+        println!(" randomizer {:?}", randomizer);
+
+        // Compute the message representative from the hash, which may require
+        // a reduction if int(hashed_message) >= group_order
+        let e = convert_hash_to_integer(hashed_message, curve_type)?;
+
+        println!("convert_hash_to_integer {:?}", e);
+
+        let theta = e.add(&rho.mul(&key_tweak)?)?;
+
+        println!(" theta {:?}", theta);
+
+        // Compute shares of sigma's numerator, i.e. openings of
+        // [nu] = theta*[lambda] + rho*[key_times_lambda]
+        let nu = match key {
+            CommitmentOpening::Simple(value) => {
+                let nu_value = theta.add(&rho.mul(value)?)?;
+                CommitmentOpening::Simple(nu_value)
+            }
+            _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
+        };
+
+        // Compute shares of sigma's denominator, i.e. openings of
+        // [mu] = randomizer*[lambda] + [kappa_times_lambda]
+        let mu = match kappa {
+            CommitmentOpening::Simple(value) => {
+                let mu_value = randomizer.add(value)?;
+                CommitmentOpening::Simple(mu_value)
+            }
+            _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
+        };
+
+        Ok(Self {
+            sigma_numerator: nu,
+            sigma_denominator: mu,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_without_lambda_bis(
+        derivation_path: &DerivationPath,
+        hashed_message: &[u8],
+        randomness: Randomness,
+        key_transcript: &IDkgTranscriptInternal,
+        presig_transcript: &IDkgTranscriptInternal,
+        key: &CommitmentOpening,
+        kappa: &CommitmentOpening,
+        curve_type: EccCurveType,
+    ) -> CanisterThresholdResult<Self> {
+        println!("this is shares 1 {:?}", key);
+
+        let (rho, key_tweak, randomizer, _presig) = derive_rho(
+            curve_type,
+            hashed_message,
+            &randomness,
+            derivation_path,
+            key_transcript,
+            presig_transcript,
+        )?;
+
+        // Compute the message representative from the hash, which may require
+        // a reduction if int(hashed_message) >= group_order
+        let e = convert_hash_to_integer(hashed_message, curve_type)?;
+
+        let theta = e.add(&rho.mul(&key_tweak)?)?;
+
+        /*let (lambda_value, lambda_mask) = match lambda {
+            CommitmentOpening::Pedersen(lambda_value, lambda_mask) => (lambda_value, lambda_mask),
+            _ => return Err(ThresholdEcdsaError::UnexpectedCommitmentType),
+        };*/
+
+        /*let key_times_lambda = key.mul(theta);
+        let kappa_times_lambda = kappa.mul(theta);*/
+
+        // Compute shares of sigma's numerator, i.e. openings of
+        // [nu] = theta*[lambda] + rho*[key_times_lambda]
+        let nu = match key {
+            CommitmentOpening::Pedersen(value, mask) => {
+                let nu_value = theta.mul(&theta)?.add(&rho.mul(&value.mul(&theta)?)?)?;
+                let nu_mask = theta.mul(&theta)?.add(&rho.mul(&mask.mul(&theta)?)?)?;
+                CommitmentOpening::Pedersen(nu_value, nu_mask)
+            }
+            _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
+        };
+
+        // Compute shares of sigma's denominator, i.e. openings of
+        // [mu] = randomizer*[lambda] + [kappa_times_lambda]
+        let mu = match kappa {
+            CommitmentOpening::Pedersen(value, mask) => {
+                let mu_value = randomizer.mul(&theta)?.add(&value.mul(&theta)?)?;
+                let mu_mask = randomizer.mul(&theta)?.add(&mask.mul(&theta)?)?;
+                CommitmentOpening::Pedersen(mu_value, mu_mask)
+            }
+            _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
+        };
+
+        Ok(Self {
+            sigma_numerator: nu,
+            sigma_denominator: mu,
+        })
+    }
+
     pub fn serialize(&self) -> CanisterThresholdSerializationResult<Vec<u8>> {
         serde_cbor::to_vec(self).map_err(|e| CanisterThresholdSerializationError(format!("{}", e)))
     }
