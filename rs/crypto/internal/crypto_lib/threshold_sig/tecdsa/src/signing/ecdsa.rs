@@ -301,10 +301,10 @@ impl ThresholdEcdsaSigShareInternal {
 
         match &self.sigma_numerator {
             CommitmentOpening::Simple(v) => {
-                if sigma_num != EccPoint::mul_by_g(v)? {
+                if sigma_num != EccPoint::mul_by_g(v) {
                     println!("\n ERROR HERE 1 ");
                     println!("this is Sigma    {:?}", sigma_num);
-                    println!("this is mul_by_g {:?}", EccPoint::mul_by_g(v)?);
+                    println!("this is mul_by_g {:?}", EccPoint::mul_by_g(v));
 
                     return Err(CanisterThresholdError::InvalidCommitment);
                 }
@@ -314,7 +314,7 @@ impl ThresholdEcdsaSigShareInternal {
 
         match &self.sigma_denominator {
             CommitmentOpening::Simple(v) => {
-                if sigma_den != EccPoint::mul_by_g(v)? {
+                if sigma_den != EccPoint::mul_by_g(v) {
                     println!("ERROR HERE 2 ");
 
                     return Err(CanisterThresholdError::InvalidCommitment);
