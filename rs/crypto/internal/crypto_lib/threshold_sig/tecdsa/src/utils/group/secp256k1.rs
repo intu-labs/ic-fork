@@ -4,6 +4,7 @@ use k256::elliptic_curve::{
     ops::{LinearCombination, MulByGenerator, Reduce},
     scalar::IsHigh,
     sec1::FromEncodedPoint,
+    sec1::ToEncodedPoint,
     Field, Group,
 };
 use std::ops::Neg;
