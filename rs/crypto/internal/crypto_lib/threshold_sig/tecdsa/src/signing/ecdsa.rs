@@ -232,10 +232,10 @@ impl ThresholdEcdsaSigShareInternal {
         key_transcript: &IDkgTranscriptInternal,
         presig_transcript: &IDkgTranscriptInternal,
         curve_type: EccCurveType,
-    ) -> ThresholdEcdsaResult<()> {
+    ) -> CanisterThresholdResult<()> {
         let kappa = presig_transcript.clone();
         let key = key_transcript.clone();
-        
+
         // Compute rho and tweak
         let (rho, key_tweak, randomizer, presig) = derive_rho(
             curve_type,
@@ -250,13 +250,12 @@ impl ThresholdEcdsaSigShareInternal {
         let theta = e.add(&rho.mul(&key_tweak)?)?;
 
         println!("\n Verify Print infos ");
-        println!("VERIFY rho {:?}", rho );
-        println!("VERIFY presig {:?}", presig );
-        println!("VERIFY key_tweak {:?}", key_tweak );
-        println!("VERIFY randomizer {:?}", randomizer );
-        println!("VERIFY convert_hash_to_integer {:?}", e );
-        println!("VERIFY theta {:?}", theta );
-
+        println!("VERIFY rho {:?}", rho);
+        println!("VERIFY presig {:?}", presig);
+        println!("VERIFY key_tweak {:?}", key_tweak);
+        println!("VERIFY randomizer {:?}", randomizer);
+        println!("VERIFY convert_hash_to_integer {:?}", e);
+        println!("VERIFY theta {:?}", theta);
 
         // Evaluate commitments at the receiver index
         let kappa_j = kappa.evaluate_at(signer_index)?;
@@ -267,21 +266,18 @@ impl ThresholdEcdsaSigShareInternal {
         /// Commitment = C = (g^1, g^0, ..., g^0)
         /// CommitmentOpening for P_j = C^(j) = g^1
         let id_j = EccPoint::generator_g(curve_type);
-       
+
         let sigma_num = id_j
             .scalar_mul(&theta)?
             .add_points(&key_j.scalar_mul(&rho)?)?;
 
-        let sigma_den = id_j
-            .scalar_mul(&randomizer)?
-            .add_points(&kappa_j)?;
+        let sigma_den = id_j.scalar_mul(&randomizer)?.add_points(&kappa_j)?;
 
         /*let sigma_num = key_j.scalar_mul(&rho)?
             .scalar_mul(&theta)?;
 
         let sigma_den = kappa_j
             .scalar_mul(&randomizer)?;*/
-
 
         /*let nu = match key {
             CommitmentOpening::Pedersen(value, mask) => {
@@ -302,8 +298,6 @@ impl ThresholdEcdsaSigShareInternal {
             }
             _ => return Err(ThresholdEcdsaError::UnexpectedCommitmentType),
         }; */
-
-
 
         match &self.sigma_numerator {
             CommitmentOpening::Simple(v) => {
@@ -343,7 +337,7 @@ impl ThresholdEcdsaSigShareInternal {
         kappa: &IDkgTranscriptInternal,
         key: &IDkgTranscriptInternal,
         curve_type: EccCurveType,
-    ) -> ThresholdEcdsaResult<()> {
+    ) -> CanisterThresholdResult<()> {
         // Compute rho and tweak
         let (rho, key_tweak, randomizer, _presig) = derive_rho(
             curve_type,
@@ -357,20 +351,18 @@ impl ThresholdEcdsaSigShareInternal {
         let theta = e.add(&rho.mul(&key_tweak)?)?;
         let kappa_j = kappa.evaluate_at(signer_index)?;
         let key_j = key.evaluate_at(signer_index)?;
-        let id_j = EccPoint::identity(curve_type).scalar_mul(&EccScalar::from_u64(curve_type, signer_index.into()))?;
+        let id_j = EccPoint::identity(curve_type)
+            .scalar_mul(&EccScalar::from_u64(curve_type, signer_index.into()))?;
         let sigma_num = id_j
             .scalar_mul(&theta)?
             .add_points(&key_j.scalar_mul(&rho)?)?;
-        let sigma_den = id_j
-            .scalar_mul(&randomizer)?
-            .add_points(&kappa_j)?;
+        let sigma_den = id_j.scalar_mul(&randomizer)?.add_points(&kappa_j)?;
         match &self.sigma_numerator {
             CommitmentOpening::Pedersen(v, m) => {
-                
-                //if sigma_num != EccPoint::Simple(v)? {   ///not working because of this 
+                //if sigma_num != EccPoint::Simple(v)? {   ///not working because of this
 
-                if sigma_num != EccPoint::pedersen(v, m)? {   ///not working because of this 
-
+                if sigma_num != EccPoint::pedersen(v, m)? {
+                    ///not working because of this
                     return Err(ThresholdEcdsaError::InvalidCommitment);
                 }
             }
@@ -378,7 +370,7 @@ impl ThresholdEcdsaSigShareInternal {
         }
         match &self.sigma_denominator {
             CommitmentOpening::Pedersen(v, m) => {
-                if sigma_den != EccPoint::pedersen(v,m)? {
+                if sigma_den != EccPoint::pedersen(v, m)? {
                     return Err(ThresholdEcdsaError::InvalidCommitment);
                 }
             }
@@ -387,8 +379,6 @@ impl ThresholdEcdsaSigShareInternal {
 
         Ok(())
     }
-    
-}
 
     pub(crate) fn new_without_lambda(
         derivation_path: &DerivationPath,
