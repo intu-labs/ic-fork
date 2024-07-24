@@ -1057,6 +1057,18 @@ impl EccPoint {
         }
     }
 
+    /// Serialize a point in uncompressed form
+    ///
+    /// The output is in SEC1 format, and will be 1 header byte
+    /// followed by a two field elements, which for K256 and P256 is
+    /// 32 bytes long each.
+    fn serialize_uncompressed(&self) -> Vec<u8> {
+        match &self.point {
+            EccPointInternal::K256(pt) => pt.serialize_uncompressed(),
+            EccPointInternal::P256(pt) => pt.serialize_uncompressed(),
+        }
+    }
+
     /// Serialize a point's x coordinate
     ///
     /// This is a funky format for secp256k1 used by BIP340.
