@@ -261,10 +261,10 @@ impl ThresholdEcdsaSigShareInternal {
         let kappa_j = kappa.evaluate_at(signer_index)?;
         let key_j = key.evaluate_at(signer_index)?;
 
-        /// Presume that the following resharing was performed for the constant secret 1
-        /// Polynomial = 1
-        /// Commitment = C = (g^1, g^0, ..., g^0)
-        /// CommitmentOpening for P_j = C^(j) = g^1
+        // Presume that the following resharing was performed for the constant secret 1
+        // Polynomial = 1
+        // Commitment = C = (g^1, g^0, ..., g^0)
+        // CommitmentOpening for P_j = C^(j) = g^1
         let id_j = EccPoint::generator_g(curve_type);
 
         let sigma_num = id_j
@@ -285,7 +285,7 @@ impl ThresholdEcdsaSigShareInternal {
                 let nu_mask = theta.add(&rho.mul(mask)?)?;
                 CommitmentOpening::Pedersen(nu_value, nu_mask)
             }
-            _ => return Err(ThresholdEcdsaError::UnexpectedCommitmentType),
+            _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
         };
 
         // Compute shares of sigma's denominator, i.e. openings of
@@ -296,7 +296,7 @@ impl ThresholdEcdsaSigShareInternal {
                 let mu_mask = randomizer.add(mask)?;
                 CommitmentOpening::Pedersen(mu_value, mu_mask)
             }
-            _ => return Err(ThresholdEcdsaError::UnexpectedCommitmentType),
+            _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
         }; */
 
         match &self.sigma_numerator {
@@ -306,10 +306,10 @@ impl ThresholdEcdsaSigShareInternal {
                     println!("this is Sigma    {:?}", sigma_num);
                     println!("this is mul_by_g {:?}", EccPoint::mul_by_g(v)?);
 
-                    return Err(ThresholdEcdsaError::InvalidCommitment);
+                    return Err(CanisterThresholdError::InvalidCommitment);
                 }
             }
-            _ => return Err(ThresholdEcdsaError::UnexpectedCommitmentType),
+            _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
         }
 
         match &self.sigma_denominator {
@@ -317,10 +317,10 @@ impl ThresholdEcdsaSigShareInternal {
                 if sigma_den != EccPoint::mul_by_g(v)? {
                     println!("ERROR HERE 2 ");
 
-                    return Err(ThresholdEcdsaError::InvalidCommitment);
+                    return Err(CanisterThresholdError::InvalidCommitment);
                 }
             }
-            _ => return Err(ThresholdEcdsaError::UnexpectedCommitmentType),
+            _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
         }
 
         Ok(())
@@ -363,18 +363,18 @@ impl ThresholdEcdsaSigShareInternal {
 
                 if sigma_num != EccPoint::pedersen(v, m)? {
                     ///not working because of this
-                    return Err(ThresholdEcdsaError::InvalidCommitment);
+                    return Err(CanisterThresholdError::InvalidCommitment);
                 }
             }
-            _ => return Err(ThresholdEcdsaError::UnexpectedCommitmentType),
+            _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
         }
         match &self.sigma_denominator {
             CommitmentOpening::Pedersen(v, m) => {
                 if sigma_den != EccPoint::pedersen(v, m)? {
-                    return Err(ThresholdEcdsaError::InvalidCommitment);
+                    return Err(CanisterThresholdError::InvalidCommitment);
                 }
             }
-            _ => return Err(ThresholdEcdsaError::UnexpectedCommitmentType),
+            _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
         }
 
         Ok(())
@@ -532,7 +532,7 @@ impl ThresholdEcdsaSigShareInternal {
 
         /*let (lambda_value, lambda_mask) = match lambda {
             CommitmentOpening::Pedersen(lambda_value, lambda_mask) => (lambda_value, lambda_mask),
-            _ => return Err(ThresholdEcdsaError::UnexpectedCommitmentType),
+            _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
         };*/
 
         /*let key_times_lambda = key.mul(theta);
