@@ -298,7 +298,7 @@ impl ThresholdEcdsaSigShareInternal {
 
         /*let (lambda_value, lambda_mask) = match lambda {
             CommitmentOpening::Pedersen(lambda_value, lambda_mask) => (lambda_value, lambda_mask),
-            _ => return Err(ThresholdEcdsaError::UnexpectedCommitmentType),
+            _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
         };*/
 
         /*let key_times_lambda = key.mul(theta);
@@ -397,6 +397,164 @@ impl ThresholdEcdsaSigShareInternal {
             _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
         }
 
+        match &self.sigma_denominator {
+            CommitmentOpening::Pedersen(v, m) => {
+                if sigma_den != EccPoint::pedersen(v, m)? {
+                    return Err(CanisterThresholdError::InvalidCommitment);
+                }
+            }
+            _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
+        }
+
+        Ok(())
+    }
+
+    #[allow(clippy::many_single_char_names, clippy::too_many_arguments)]
+    pub fn verify_without_lambda(
+        &self,
+        derivation_path: &DerivationPath,
+        hashed_message: &[u8],
+        randomness: Randomness,
+        signer_index: NodeIndex,
+        key_transcript: &IDkgTranscriptInternal,
+        presig_transcript: &IDkgTranscriptInternal,
+        curve_type: EccCurveType,
+    ) -> CanisterThresholdResult<()> {
+        let kappa = presig_transcript.clone();
+        let key = key_transcript.clone();
+
+        // Compute rho and tweak
+        let (rho, key_tweak, randomizer, presig) = derive_rho(
+            curve_type,
+            hashed_message,
+            &randomness,
+            derivation_path,
+            key_transcript,
+            presig_transcript,
+        )?;
+        // Compute theta
+        let e = convert_hash_to_integer(hashed_message, curve_type)?;
+        let theta = e.add(&rho.mul(&key_tweak)?)?;
+
+        println!("\n Verify Print infos ");
+        println!("VERIFY rho {:?}", rho);
+        println!("VERIFY presig {:?}", presig);
+        println!("VERIFY key_tweak {:?}", key_tweak);
+        println!("VERIFY randomizer {:?}", randomizer);
+        println!("VERIFY convert_hash_to_integer {:?}", e);
+        println!("VERIFY theta {:?}", theta);
+
+        // Evaluate commitments at the receiver index
+        let kappa_j = kappa.evaluate_at(signer_index)?;
+        let key_j = key.evaluate_at(signer_index)?;
+
+        // Presume that the following resharing was performed for the constant secret 1
+        // Polynomial = 1
+        // Commitment = C = (g^1, g^0, ..., g^0)
+        // CommitmentOpening for P_j = C^(j) = g^1
+        let id_j = EccPoint::generator_g(curve_type);
+
+        let sigma_num = id_j
+            .scalar_mul(&theta)?
+            .add_points(&key_j.scalar_mul(&rho)?)?;
+
+        let sigma_den = id_j.scalar_mul(&randomizer)?.add_points(&kappa_j)?;
+
+        /*let sigma_num = key_j.scalar_mul(&rho)?
+            .scalar_mul(&theta)?;
+
+        let sigma_den = kappa_j
+            .scalar_mul(&randomizer)?;*/
+
+        /*let nu = match key {
+            CommitmentOpening::Pedersen(value, mask) => {
+                let nu_value = theta.add(&rho.mul(value)?)?;
+                let nu_mask = theta.add(&rho.mul(mask)?)?;
+                CommitmentOpening::Pedersen(nu_value, nu_mask)
+            }
+            _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
+        };
+
+        // Compute shares of sigma's denominator, i.e. openings of
+        // [mu] = randomizer*[lambda] + [kappa_times_lambda]
+        let mu = match kappa {
+            CommitmentOpening::Pedersen(value, mask) => {
+                let mu_value = randomizer.add(value)?;
+                let mu_mask = randomizer.add(mask)?;
+                CommitmentOpening::Pedersen(mu_value, mu_mask)
+            }
+            _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
+        }; */
+
+        match &self.sigma_numerator {
+            CommitmentOpening::Simple(v) => {
+                if sigma_num != EccPoint::mul_by_g(v) {
+                    println!("\n ERROR HERE 1 ");
+                    println!("this is Sigma    {:?}", sigma_num);
+                    println!("this is mul_by_g {:?}", EccPoint::mul_by_g(v));
+
+                    return Err(CanisterThresholdError::InvalidCommitment);
+                }
+            }
+            _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
+        }
+
+        match &self.sigma_denominator {
+            CommitmentOpening::Simple(v) => {
+                if sigma_den != EccPoint::mul_by_g(v) {
+                    println!("ERROR HERE 2 ");
+
+                    return Err(CanisterThresholdError::InvalidCommitment);
+                }
+            }
+            _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
+        }
+
+        Ok(())
+    }
+    #[allow(clippy::many_single_char_names, clippy::too_many_arguments)]
+    pub fn verify_without_lambda_reshare_masked(
+        &self,
+        derivation_path: &DerivationPath,
+        hashed_message: &[u8],
+        randomness: Randomness,
+        signer_index: NodeIndex,
+        key_transcript: &IDkgTranscriptInternal,
+        presig_transcript: &IDkgTranscriptInternal,
+        kappa: &IDkgTranscriptInternal,
+        key: &IDkgTranscriptInternal,
+        curve_type: EccCurveType,
+    ) -> CanisterThresholdResult<()> {
+        // Compute rho and tweak
+        let (rho, key_tweak, randomizer, _presig) = derive_rho(
+            curve_type,
+            hashed_message,
+            &randomness,
+            derivation_path,
+            key_transcript,
+            presig_transcript,
+        )?;
+        let e = convert_hash_to_integer(hashed_message, curve_type)?;
+        let theta = e.add(&rho.mul(&key_tweak)?)?;
+        let kappa_j = kappa.evaluate_at(signer_index)?;
+        let key_j = key.evaluate_at(signer_index)?;
+        let id_j = EccPoint::identity(curve_type)
+            .scalar_mul(&EccScalar::from_u64(curve_type, signer_index.into()))?;
+        let sigma_num = id_j
+            .scalar_mul(&theta)?
+            .add_points(&key_j.scalar_mul(&rho)?)?;
+        let sigma_den = id_j.scalar_mul(&randomizer)?.add_points(&kappa_j)?;
+        match &self.sigma_numerator {
+            CommitmentOpening::Pedersen(v, m) => {
+                //if sigma_num != EccPoint::Simple(v)? {   ///not working because of this
+
+                if sigma_num != EccPoint::pedersen(v, m)? {
+                    ///not working because of this
+                    return Err(CanisterThresholdError::InvalidCommitment);
+                }
+            }
+            _ => return Err(CanisterThresholdError::UnexpectedCommitmentType),
+        }
         match &self.sigma_denominator {
             CommitmentOpening::Pedersen(v, m) => {
                 if sigma_den != EccPoint::pedersen(v, m)? {
@@ -547,6 +705,72 @@ impl ThresholdEcdsaCombinedSigInternal {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_without_lambda(
+        derivation_path: &DerivationPath,
+        hashed_message: &[u8],
+        randomness: Randomness,
+        key_transcript: &IDkgTranscriptInternal,
+        presig_transcript: &IDkgTranscriptInternal,
+        reconstruction_threshold: NumberOfNodes,
+        sig_shares: &BTreeMap<NodeIndex, ThresholdEcdsaSigShareInternal>,
+        curve_type: EccCurveType,
+    ) -> CanisterThresholdResult<Self> {
+        let reconstruction_threshold = reconstruction_threshold.get() as usize;
+        if sig_shares.len() < reconstruction_threshold {
+            return Err(CanisterThresholdError::InsufficientDealings);
+        }
+
+        let (rho, _key_tweak, _randomizer, _presig) = derive_rho(
+            curve_type,
+            hashed_message,
+            &randomness,
+            derivation_path,
+            key_transcript,
+            presig_transcript,
+        )?;
+
+        // Compute sigma's numerator via interpolation
+        let mut x_values = Vec::with_capacity(reconstruction_threshold);
+        let mut numerator_samples = Vec::with_capacity(reconstruction_threshold);
+        let mut denominator_samples = Vec::with_capacity(reconstruction_threshold);
+
+        for (index, sig_share) in sig_shares.iter().take(reconstruction_threshold) {
+            x_values.push(*index);
+            // Reconstruction of the signature share does not require recombining the
+            // masking values.
+            if let CommitmentOpening::Simple(c) = &sig_share.sigma_numerator {
+                numerator_samples.push(c.clone());
+            } else {
+                return Err(CanisterThresholdError::UnexpectedCommitmentType);
+            }
+
+            if let CommitmentOpening::Simple(c) = &sig_share.sigma_denominator {
+                denominator_samples.push(c.clone());
+            } else {
+                return Err(CanisterThresholdError::UnexpectedCommitmentType);
+            }
+        }
+
+        let coefficients = LagrangeCoefficients::at_zero(curve_type, &x_values)?;
+        let numerator = coefficients.interpolate_scalar(&numerator_samples)?;
+        let denominator = coefficients.interpolate_scalar(&denominator_samples)?;
+
+        let sigma = numerator.mul(&denominator.invert())?;
+
+        // Always use the smaller value of s
+        let norm_sigma = if sigma.is_high()? {
+            sigma.negate()
+        } else {
+            sigma
+        };
+
+        Ok(Self {
+            r: rho,
+            s: norm_sigma,
+        })
+    }
+
     /// Verify a threshold ECDSA signature
     ///
     /// This not only verifies the basic signature equation but also that
@@ -635,4 +859,109 @@ impl ThresholdEcdsaCombinedSigInternal {
         // accept:
         Ok(())
     }
+
+    pub fn verify_without_lambda(
+        &self,
+        derivation_path: &DerivationPath,
+        hashed_message: &[u8],
+        randomness: Randomness,
+        presig_transcript: &IDkgTranscriptInternal,
+        key_transcript: &IDkgTranscriptInternal,
+        curve_type: EccCurveType,
+    ) -> CanisterThresholdResult<()> {
+        if self.r.is_zero() || self.s.is_zero() {
+            return Err(CanisterThresholdError::InvalidSignature);
+        }
+
+        let msg = convert_hash_to_integer(hashed_message, curve_type)?;
+
+        let (rho, key_tweak, _, pre_sig) = derive_rho(
+            curve_type,
+            hashed_message,
+            &randomness,
+            derivation_path,
+            key_transcript,
+            presig_transcript,
+        )?;
+
+        if self.r != rho {
+            println!("ERROR HERE verifying sig 1");
+            return Err(CanisterThresholdError::InvalidSignature);
+        }
+
+        // We require s normalization for all curves
+        if self.s.is_high()? {
+            println!("ERROR HERE verifying sig 2");
+
+            return Err(CanisterThresholdError::InvalidSignature);
+        }
+
+        let master_public_key = key_transcript.constant_term();
+        let tweak_g = EccPoint::mul_by_g(&key_tweak);
+        let public_key = tweak_g.add_points(&master_public_key)?;
+
+        let s_inv = self.s.invert().unwrap();
+
+        let u1 = msg.mul(&s_inv)?;
+        let u2 = self.r.mul(&s_inv)?;
+
+        let rp = EccPoint::mul_2_points(&EccPoint::generator_g(curve_type), &u1, &public_key, &u2)?;
+
+        if rp.is_infinity()? {
+            println!("ERROR HERE verifying sig 3");
+            return Err(CanisterThresholdError::InvalidSignature);
+        }
+
+        /*
+        In normal ECDSA verification we would have
+
+        r = x_coordinate(k*G) % order
+
+        and during verification check
+
+        r == x_coordinate(rp) % order
+
+        To aid the security proof, instead here we use pre_sig (which equals k*G)
+        and check that x_coordinate(pre_sig) == x_coordinate(rp)
+
+        Due to normalization of s pre_sig and rp may differ in their sign, so
+        we only check the x coordinate.
+        */
+
+        if rp.affine_x()? != pre_sig.affine_x()? {
+            println!("ERROR HERE verifying sig 4");
+            return Err(CanisterThresholdError::InvalidSignature);
+        }
+
+        // accept:
+        Ok(())
+    }
+
+    /*
+    /// Returns a public key derived from `master_public_key` according to the
+    /// `derivation_path`.  The algorithm id of the derived key is the same
+    /// as the algorithm id of `master_public_key`.
+    // steven July 2024 - general problems with ecdsapublickey and etc
+    pub fn derive_public_key(
+        master_public_key: &MasterEcdsaPublicKey,
+        derivation_path: &DerivationPath,
+    ) -> CanisterThresholdResult<EcdsaPublicKey> {
+        let raw_master_pk = match master_public_key.algorithm_id {
+            AlgorithmId::EcdsaSecp256k1 => {
+                EccPoint::deserialize(EccCurveType::K256, &master_public_key.public_key)?
+            }
+            _ => return Err(CanisterThresholdError::CurveMismatch),
+        };
+        // Compute tweak
+        let (key_tweak, chain_key) = derivation_path.derive_tweak(&raw_master_pk)?;
+        let tweak_g = EccPoint::mul_by_g(&key_tweak)?;
+        let public_key = tweak_g.add_points(&raw_master_pk)?;
+        //
+        Ok(EcdsaPublicKey {
+            algorithm_id: master_public_key.algorithm_id,
+            public_key: public_key.serialize(),
+            chain_key,
+        })
+    }
+    */
 }
