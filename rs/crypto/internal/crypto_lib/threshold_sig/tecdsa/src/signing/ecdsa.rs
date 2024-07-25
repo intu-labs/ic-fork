@@ -756,7 +756,7 @@ impl ThresholdEcdsaCombinedSigInternal {
         let numerator = coefficients.interpolate_scalar(&numerator_samples)?;
         let denominator = coefficients.interpolate_scalar(&denominator_samples)?;
 
-        let sigma = numerator.mul(&denominator.invert())?;
+        let sigma = numerator.mul(&denominator.invert().unwrap())?;
 
         // Always use the smaller value of s
         let norm_sigma = if sigma.is_high()? {
@@ -928,7 +928,8 @@ impl ThresholdEcdsaCombinedSigInternal {
         we only check the x coordinate.
         */
 
-        if rp.affine_x()? != pre_sig.affine_x()? {
+        //steven - july 2024 - commenting out this block becuase affine_x doesn't exist any longer
+        if rp.affine_x_bytes()? != pre_sig.affine_x_bytes()? {
             println!("ERROR HERE verifying sig 4");
             return Err(CanisterThresholdError::InvalidSignature);
         }
