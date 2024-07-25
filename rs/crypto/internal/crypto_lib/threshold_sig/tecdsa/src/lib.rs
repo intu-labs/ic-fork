@@ -934,6 +934,37 @@ pub fn combine_ecdsa_signature_shares(
     .map_err(ThresholdEcdsaCombineSigSharesInternalError::from)
 }
 
+/// Combine sufficient signature shares into an ECDSA signature
+///
+/// The signature shares must be verified prior to use, and there must
+/// be at least reconstruction_threshold many of them.
+#[allow(clippy::too_many_arguments)]
+pub fn combine_ecdsa_signature_shares_without_lambda(
+    derivation_path: &DerivationPath,
+    hashed_message: &[u8],
+    randomness: Randomness,
+    key_transcript: &IDkgTranscriptInternal,
+    presig_transcript: &IDkgTranscriptInternal,
+    reconstruction_threshold: NumberOfNodes,
+    sig_shares: &BTreeMap<NodeIndex, ThresholdEcdsaSigShareInternal>,
+    algorithm_id: AlgorithmId,
+) -> Result<ThresholdEcdsaCombinedSigInternal, ThresholdEcdsaCombineSigSharesInternalError> {
+    let alg = IdkgProtocolAlgorithm::from_algorithm(algorithm_id)
+        .ok_or(ThresholdEcdsaCombineSigSharesInternalError::UnsupportedAlgorithm)?;
+
+    crate::signing::ecdsa::ThresholdEcdsaCombinedSigInternal::new_without_lambda(
+        derivation_path,
+        hashed_message,
+        randomness,
+        key_transcript,
+        presig_transcript,
+        reconstruction_threshold,
+        sig_shares,
+        alg.curve(),
+    )
+    .map_err(ThresholdEcdsaCombineSigSharesInternalError::from)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ThresholdEcdsaVerifySignatureInternalError {
     InvalidSignature,
