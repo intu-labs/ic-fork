@@ -768,6 +768,57 @@ pub fn create_ecdsa_signature_share(
     .map_err(ThresholdEcdsaGenerateSigShareInternalError::from)
 }
 
+/// Create a new threshold ECDSA signature share
+///
+/// The derivation_path creates a new key relative to the master key
+///
+/// The nonce should be random and shared by all nodes, for instance
+/// by deriving a value from the random tape.
+///
+/// The presig_transcript is the transcript of the pre-signature (kappa)
+///
+/// lambda, kappa_times_lambda, and key_times_lambda are our openings
+/// of the commitments in the associated transcripts.
+///
+/// The hashed message must have the same size as the underlying curve
+/// order, for instance for P-256 a 256-bit hash function must be
+/// used.
+#[allow(clippy::too_many_arguments)]
+pub fn create_ecdsa_signature_share_without_lambda(
+    derivation_path: &DerivationPath,
+    hashed_message: &[u8],
+    nonce: Randomness,
+    key_transcript: &IDkgTranscriptInternal,
+    presig_transcript: &IDkgTranscriptInternal,
+    kappa: &CommitmentOpening,
+    key: &CommitmentOpening,
+    algorithm_id: AlgorithmId,
+) -> Result<ThresholdEcdsaSigShareInternal, ThresholdEcdsaGenerateSigShareInternalError> {
+    let (curve_type, hash_len) = ecdsa_signature_parameters(algorithm_id).ok_or_else(|| {
+        ThresholdEcdsaGenerateSigShareInternalError::InvalidArguments(format!(
+            "unsupported algorithm: {algorithm_id:?}"
+        ))
+    })?;
+
+    if hashed_message.len() != hash_len {
+        return Err(ThresholdEcdsaGenerateSigShareInternalError::InvalidArguments(
+            format!("length of hashed_message ({}) not matching expected length ({hash_len}) for algorithm_id ({algorithm_id:?})", hashed_message.len()))
+        );
+    }
+
+    ThresholdEcdsaSigShareInternal::new_without_lambda(
+        derivation_path,
+        hashed_message,
+        nonce,
+        key_transcript,
+        presig_transcript,
+        key,
+        kappa,
+        curve_type,
+    )
+    .map_err(ThresholdEcdsaGenerateSigShareInternalError::from)
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ThresholdEcdsaVerifySigShareInternalError {
     InvalidArguments(String),
